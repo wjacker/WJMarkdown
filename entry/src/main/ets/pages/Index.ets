@@ -16,6 +16,11 @@ struct Index {
   private static readonly KEY_USER_ID: string = 'user_id';
   private static readonly KEY_CONVERSATION_ID: string = 'conversation_id';
   private static readonly KEY_CONFIG_EXPANDED: string = 'config_expanded';
+  private static readonly ACTION_ICON_SIZE: number = 12;
+  private static readonly ACTION_BUTTON_SIZE: number = 24;
+  private static readonly ACTION_BUTTON_RADIUS: number = 12;
+  private static readonly ACTION_GROUP_PADDING_V: number = 5;
+  private static readonly ACTION_GROUP_PADDING_H: number = 7;
 
   @State private messages: Array<ChatMessage> = [];
   @State private draft: string = '请生成一段包含任务列表、代码块和表格的 Markdown 回复。';
@@ -309,14 +314,14 @@ struct Index {
       Row({ space: 4 }) {
         Button() {
           Image($r('app.media.icon_ai_copy'))
-            .width(14)
-            .height(14)
+            .width(Index.ACTION_ICON_SIZE)
+            .height(Index.ACTION_ICON_SIZE)
             .fillColor(this.getActionIconColor(message, 'copy'))
         }
-          .width(26)
-          .height(26)
+          .width(Index.ACTION_BUTTON_SIZE)
+          .height(Index.ACTION_BUTTON_SIZE)
           .backgroundColor(this.getActionButtonBackground(message, 'copy'))
-          .borderRadius(13)
+          .borderRadius(Index.ACTION_BUTTON_RADIUS)
           .padding(0)
           .onClick(() => {
             void this.copyMessageText(message.id);
@@ -324,14 +329,14 @@ struct Index {
 
         Button() {
           Image($r('app.media.icon_ai_regenerate'))
-            .width(14)
-            .height(14)
+            .width(Index.ACTION_ICON_SIZE)
+            .height(Index.ACTION_ICON_SIZE)
             .fillColor(this.getActionIconColor(message, 'regenerate'))
         }
-          .width(26)
-          .height(26)
+          .width(Index.ACTION_BUTTON_SIZE)
+          .height(Index.ACTION_BUTTON_SIZE)
           .backgroundColor(this.getActionButtonBackground(message, 'regenerate'))
-          .borderRadius(13)
+          .borderRadius(Index.ACTION_BUTTON_RADIUS)
           .padding(0)
           .onClick(() => {
             void this.queryAgainAssistantMessage(message.id);
@@ -339,14 +344,14 @@ struct Index {
 
         Button() {
           Image($r('app.media.icon_ai_delete'))
-            .width(14)
-            .height(14)
+            .width(Index.ACTION_ICON_SIZE)
+            .height(Index.ACTION_ICON_SIZE)
             .fillColor(this.getActionIconColor(message, 'delete'))
         }
-          .width(26)
-          .height(26)
+          .width(Index.ACTION_BUTTON_SIZE)
+          .height(Index.ACTION_BUTTON_SIZE)
           .backgroundColor(this.getActionButtonBackground(message, 'delete'))
-          .borderRadius(13)
+          .borderRadius(Index.ACTION_BUTTON_RADIUS)
           .padding(0)
           .onClick(() => {
             void this.deleteAssistantMessage(message.id);
@@ -354,14 +359,14 @@ struct Index {
 
         Button() {
           Image($r('app.media.icon_ai_thumb_up'))
-            .width(14)
-            .height(14)
+            .width(Index.ACTION_ICON_SIZE)
+            .height(Index.ACTION_ICON_SIZE)
             .fillColor(this.getActionIconColor(message, 'like'))
         }
-          .width(26)
-          .height(26)
+          .width(Index.ACTION_BUTTON_SIZE)
+          .height(Index.ACTION_BUTTON_SIZE)
           .backgroundColor(this.getActionButtonBackground(message, 'like'))
-          .borderRadius(13)
+          .borderRadius(Index.ACTION_BUTTON_RADIUS)
           .padding(0)
           .onClick(() => {
             void this.toggleFeedback(message.id, MessageFeedback.Like);
@@ -369,14 +374,14 @@ struct Index {
 
         Button() {
           Image($r('app.media.icon_ai_thumb_down'))
-            .width(14)
-            .height(14)
+            .width(Index.ACTION_ICON_SIZE)
+            .height(Index.ACTION_ICON_SIZE)
             .fillColor(this.getActionIconColor(message, 'dislike'))
         }
-          .width(26)
-          .height(26)
+          .width(Index.ACTION_BUTTON_SIZE)
+          .height(Index.ACTION_BUTTON_SIZE)
           .backgroundColor(this.getActionButtonBackground(message, 'dislike'))
-          .borderRadius(13)
+          .borderRadius(Index.ACTION_BUTTON_RADIUS)
           .padding(0)
           .onClick(() => {
             void this.toggleFeedback(message.id, MessageFeedback.Dislike);
@@ -384,29 +389,34 @@ struct Index {
 
         Button() {
           Image($r('app.media.icon_ai_sound'))
-            .width(14)
-            .height(14)
+            .width(Index.ACTION_ICON_SIZE)
+            .height(Index.ACTION_ICON_SIZE)
             .fillColor(this.getActionIconColor(message, 'sound'))
         }
-          .width(26)
-          .height(26)
+          .width(Index.ACTION_BUTTON_SIZE)
+          .height(Index.ACTION_BUTTON_SIZE)
           .backgroundColor(this.getActionButtonBackground(message, 'sound'))
-          .borderRadius(13)
+          .borderRadius(Index.ACTION_BUTTON_RADIUS)
           .padding(0)
           .onClick(() => {
             void this.toggleSpeakMessage(message.id);
           })
       }
-      .padding({ top: 6, right: 8, bottom: 6, left: 8 })
+      .padding({
+        top: Index.ACTION_GROUP_PADDING_V,
+        right: Index.ACTION_GROUP_PADDING_H,
+        bottom: Index.ACTION_GROUP_PADDING_V,
+        left: Index.ACTION_GROUP_PADDING_H
+      })
       .backgroundColor('#FFFFFF')
-      .borderRadius(16)
+      .borderRadius(15)
       .border({
         width: 1,
         color: '#E2E8F0'
       })
       .layoutWeight(1)
       .constraintSize({
-        maxWidth: '72%'
+        maxWidth: '66%'
       })
       .alignSelf(ItemAlign.Start)
 
@@ -416,15 +426,15 @@ struct Index {
         Row({ space: 4 }) {
           Button() {
             Image($r('app.media.icon_ai_previous'))
-              .width(18)
-              .height(18)
+              .width(Index.ACTION_ICON_SIZE)
+              .height(Index.ACTION_ICON_SIZE)
               .objectFit(ImageFit.Contain)
               .opacity(message.activeAnswerVersionIndex > 0 ? 1 : 0.45)
           }
-            .width(22)
-            .height(22)
+            .width(Index.ACTION_BUTTON_SIZE)
+            .height(Index.ACTION_BUTTON_SIZE)
             .backgroundColor('#00000000')
-            .borderRadius(11)
+            .borderRadius(Index.ACTION_BUTTON_RADIUS)
             .padding(0)
             .enabled(message.activeAnswerVersionIndex > 0)
             .onClick(() => {
@@ -432,35 +442,40 @@ struct Index {
             })
 
           Text(`${message.activeAnswerVersionIndex + 1}/${this.resolveAnswerVersionCount(message)}`)
-            .fontSize(11)
+            .fontSize(10)
             .fontWeight(FontWeight.Medium)
             .fontColor('#64748B')
 
           Button() {
             Image($r('app.media.icon_ai_next'))
-              .width(18)
-              .height(18)
+              .width(Index.ACTION_ICON_SIZE)
+              .height(Index.ACTION_ICON_SIZE)
               .objectFit(ImageFit.Contain)
               .opacity(message.activeAnswerVersionIndex + 1 < this.resolveAnswerVersionCount(message) ? 1 : 0.45)
           }
-            .width(22)
-            .height(22)
+            .width(Index.ACTION_BUTTON_SIZE)
+            .height(Index.ACTION_BUTTON_SIZE)
             .backgroundColor('#00000000')
-            .borderRadius(11)
+            .borderRadius(Index.ACTION_BUTTON_RADIUS)
             .padding(0)
             .enabled(message.activeAnswerVersionIndex + 1 < this.resolveAnswerVersionCount(message))
             .onClick(() => {
               void this.switchAnswerVariant(message.id, 1);
             })
         }
-        .padding({ top: 6, right: 8, bottom: 6, left: 8 })
+        .padding({
+          top: Index.ACTION_GROUP_PADDING_V,
+          right: Index.ACTION_GROUP_PADDING_H,
+          bottom: Index.ACTION_GROUP_PADDING_V,
+          left: Index.ACTION_GROUP_PADDING_H
+        })
         .backgroundColor('#FFFFFF')
-        .borderRadius(16)
+        .borderRadius(15)
         .border({
           width: 1,
           color: '#E2E8F0'
         })
-        .margin({ left: 8, right: 12 })
+        .margin({ left: 10, right: 16 })
         .alignSelf(ItemAlign.End)
       }
     }
