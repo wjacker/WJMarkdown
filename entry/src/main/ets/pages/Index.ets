@@ -404,6 +404,11 @@ struct Index {
         width: 1,
         color: '#E2E8F0'
       })
+      .layoutWeight(1)
+      .constraintSize({
+        maxWidth: '72%'
+      })
+      .alignSelf(ItemAlign.Start)
 
       Blank()
 
@@ -455,7 +460,8 @@ struct Index {
           width: 1,
           color: '#E2E8F0'
         })
-        .margin({ right: 6 })
+        .margin({ left: 8, right: 12 })
+        .alignSelf(ItemAlign.End)
       }
     }
     .width('100%')
