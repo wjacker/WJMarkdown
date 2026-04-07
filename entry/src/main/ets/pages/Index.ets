@@ -1,7 +1,10 @@
 import { ChatBubble } from '../components/ChatBubble';
+import pasteboard from '@ohos.pasteboard';
+import promptAction from '@ohos.promptAction';
 import preferences from '@ohos.data.preferences';
-import { ChatMessage } from '../models/ChatModels';
-import { HiAgentConfig, HiAgentHistoryMessage, HiAgentStreamEvent } from '../models/HiAgentModels';
+import textToSpeech from '@hms.ai.textToSpeech';
+import { ChatAnswerVariant, ChatMessage, ChatMessagePhase, MessageFeedback, MessageRole } from '../models/ChatModels';
+import { HiAgentConfig, HiAgentHistoryMessage, HiAgentMessageAnswerInfo, HiAgentMessageInfo, HiAgentStreamEvent } from '../models/HiAgentModels';
 import { HiAgentService, HiAgentStreamSession } from '../services/HiAgentService';
 
 @Entry
@@ -11,6 +14,7 @@ struct Index {
   private static readonly KEY_API_URL: string = 'api_url';
   private static readonly KEY_API_KEY: string = 'api_key';
   private static readonly KEY_USER_ID: string = 'user_id';
+  private static readonly KEY_CONVERSATION_ID: string = 'conversation_id';
   private static readonly KEY_CONFIG_EXPANDED: string = 'config_expanded';
 
   @State private messages: Array<ChatMessage> = [];
@@ -22,6 +26,8 @@ struct Index {
   @State private isConfigExpanded: boolean = true;
   @State private statusText: string = '请先填写 HiAgent 的 Api URL、ApiKey 和 UserID。';
   @State private isSending: boolean = false;
+  @State private speakingMessageId: string = '';
+  @State private shouldAutoScrollToBottom: boolean = true;
 
   private messageScroller: Scroller = new Scroller();
   private configStore: preferences.Preferences | null = null;
@@ -32,6 +38,9 @@ struct Index {
   private activeRevealMessageId: string = '';
   private activeAssistantMessageId: string = '';
   private activeStreamSession: HiAgentStreamSession | null = null;
+  private serviceConversationId: string = '';
+  private ttsEngine: textToSpeech.TextToSpeechEngine | null = null;
+  private answerVariantsByMessageId: Map<string, Array<ChatAnswerVariant>> = new Map();
 
   aboutToAppear(): void {
     this.resetConversation();
@@ -42,6 +51,7 @@ struct Index {
     this.flushConfigIfNeeded();
     this.stopRevealTimer();
     this.closeActiveSession();
+    this.shutdownSpeechEngine();
   }
 
   build() {
@@ -49,22 +59,42 @@ struct Index {
       this.HeaderBuilder();
       this.ConfigBuilder();
 
-      List({ space: 16, scroller: this.messageScroller }) {
+      List({ space: 22, scroller: this.messageScroller }) {
         ForEach(this.messages, (message: ChatMessage) => {
           ListItem() {
             ChatBubble({
               role: message.role,
               content: message.visibleContent,
-              isStreaming: message.isStreaming
+              isStreaming: message.isStreaming,
+              statusLabel: message.statusLabel,
+              streamPhase: message.streamPhase,
+              actionContent: this.shouldShowAssistantActions(message)
+                ? () => {
+                    this.AssistantActionsBuilder(message);
+                  }
+                : undefined
             })
+            .padding({ top: 2, bottom: 6 })
           }
-        }, (message: ChatMessage) => `${message.id}-${message.visibleContent.length}-${message.isStreaming}`)
+        }, (message: ChatMessage) =>
+          `${message.id}-${message.visibleContent.length}-${message.isStreaming}-${message.streamPhase}-${message.statusLabel}-${message.feedback}-${message.activeAnswerVersionIndex}-${message.answerVersionCount}`)
       }
       .width('100%')
       .layoutWeight(1)
-      .padding({ top: 8, right: 16, bottom: 12, left: 16 })
+      .padding({ top: 14, right: 16, bottom: 20, left: 16 })
       .backgroundColor('#F4F7FB')
       .scrollBar(BarState.Off)
+      .onReachEnd(() => {
+        this.shouldAutoScrollToBottom = true;
+      })
+      .onDidScroll((_scrollOffset: number, scrollState: ScrollState) => {
+        if (scrollState === ScrollState.Scroll) {
+          this.shouldAutoScrollToBottom = this.safeIsAtEnd();
+        }
+      })
+      .onScrollStop(() => {
+        this.shouldAutoScrollToBottom = this.safeIsAtEnd();
+      })
 
       this.ComposerBuilder();
     }
@@ -99,7 +129,7 @@ struct Index {
           .borderRadius(18)
           .padding({ left: 14, right: 14 })
           .onClick(() => {
-            this.resetConversation();
+            this.startNewConversation();
           })
       }
       .width('100%')
@@ -273,14 +303,198 @@ struct Index {
     .backgroundColor('#FFF7ED')
   }
 
+  @Builder
+  private AssistantActionsBuilder(message: ChatMessage) {
+    Row({ space: 8 }) {
+      Row({ space: 4 }) {
+        Button() {
+          Image($r('app.media.icon_ai_copy'))
+            .width(14)
+            .height(14)
+            .fillColor(this.getActionIconColor(message, 'copy'))
+        }
+          .width(26)
+          .height(26)
+          .backgroundColor(this.getActionButtonBackground(message, 'copy'))
+          .borderRadius(13)
+          .padding(0)
+          .onClick(() => {
+            void this.copyMessageText(message.id);
+          })
+
+        Button() {
+          Image($r('app.media.icon_ai_regenerate'))
+            .width(14)
+            .height(14)
+            .fillColor(this.getActionIconColor(message, 'regenerate'))
+        }
+          .width(26)
+          .height(26)
+          .backgroundColor(this.getActionButtonBackground(message, 'regenerate'))
+          .borderRadius(13)
+          .padding(0)
+          .onClick(() => {
+            void this.queryAgainAssistantMessage(message.id);
+          })
+
+        Button() {
+          Image($r('app.media.icon_ai_delete'))
+            .width(14)
+            .height(14)
+            .fillColor(this.getActionIconColor(message, 'delete'))
+        }
+          .width(26)
+          .height(26)
+          .backgroundColor(this.getActionButtonBackground(message, 'delete'))
+          .borderRadius(13)
+          .padding(0)
+          .onClick(() => {
+            void this.deleteAssistantMessage(message.id);
+          })
+
+        Button() {
+          Image($r('app.media.icon_ai_thumb_up'))
+            .width(14)
+            .height(14)
+            .fillColor(this.getActionIconColor(message, 'like'))
+        }
+          .width(26)
+          .height(26)
+          .backgroundColor(this.getActionButtonBackground(message, 'like'))
+          .borderRadius(13)
+          .padding(0)
+          .onClick(() => {
+            void this.toggleFeedback(message.id, MessageFeedback.Like);
+          })
+
+        Button() {
+          Image($r('app.media.icon_ai_thumb_down'))
+            .width(14)
+            .height(14)
+            .fillColor(this.getActionIconColor(message, 'dislike'))
+        }
+          .width(26)
+          .height(26)
+          .backgroundColor(this.getActionButtonBackground(message, 'dislike'))
+          .borderRadius(13)
+          .padding(0)
+          .onClick(() => {
+            void this.toggleFeedback(message.id, MessageFeedback.Dislike);
+          })
+
+        Button() {
+          Image($r('app.media.icon_ai_sound'))
+            .width(14)
+            .height(14)
+            .fillColor(this.getActionIconColor(message, 'sound'))
+        }
+          .width(26)
+          .height(26)
+          .backgroundColor(this.getActionButtonBackground(message, 'sound'))
+          .borderRadius(13)
+          .padding(0)
+          .onClick(() => {
+            void this.toggleSpeakMessage(message.id);
+          })
+      }
+      .padding({ top: 6, right: 8, bottom: 6, left: 8 })
+      .backgroundColor('#FFFFFF')
+      .borderRadius(16)
+      .border({
+        width: 1,
+        color: '#E2E8F0'
+      })
+
+      Blank()
+
+      if (this.shouldShowAnswerPager(message)) {
+        Row({ space: 4 }) {
+          Button() {
+            Image($r('app.media.icon_ai_previous'))
+              .width(12)
+              .height(12)
+              .fillColor(message.activeAnswerVersionIndex > 0 ? '#64748B' : '#CBD5E1')
+          }
+            .width(24)
+            .height(24)
+            .backgroundColor('#F8FAFC')
+            .borderRadius(12)
+            .padding(0)
+            .enabled(message.activeAnswerVersionIndex > 0)
+            .onClick(() => {
+              void this.switchAnswerVariant(message.id, -1);
+            })
+
+          Text(`${message.activeAnswerVersionIndex + 1}/${this.resolveAnswerVersionCount(message)}`)
+            .fontSize(11)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#64748B')
+
+          Button() {
+            Image($r('app.media.icon_ai_next'))
+              .width(12)
+              .height(12)
+              .fillColor(message.activeAnswerVersionIndex + 1 < this.resolveAnswerVersionCount(message) ? '#64748B' : '#CBD5E1')
+          }
+            .width(24)
+            .height(24)
+            .backgroundColor('#F8FAFC')
+            .borderRadius(12)
+            .padding(0)
+            .enabled(message.activeAnswerVersionIndex + 1 < this.resolveAnswerVersionCount(message))
+            .onClick(() => {
+              void this.switchAnswerVariant(message.id, 1);
+            })
+        }
+        .padding({ top: 6, right: 8, bottom: 6, left: 8 })
+        .backgroundColor('#FFFFFF')
+        .borderRadius(16)
+        .border({
+          width: 1,
+          color: '#E2E8F0'
+        })
+      }
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+  }
+
+  private shouldShowAssistantActions(message: ChatMessage): boolean {
+    return message.role === MessageRole.Assistant &&
+      message.visibleContent.trim().length > 0 &&
+      !message.isStreaming &&
+      message.serviceMessageId.trim().length > 0;
+  }
+
+  private resolveAnswerVersionCount(message: ChatMessage): number {
+    const localVariants: Array<ChatAnswerVariant> | undefined = this.answerVariantsByMessageId.get(message.id);
+    if (localVariants !== undefined && localVariants.length > 0) {
+      return localVariants.length;
+    }
+    return message.answerVersionCount;
+  }
+
+  private shouldShowAnswerPager(message: ChatMessage): boolean {
+    return this.resolveAnswerVersionCount(message) > 1;
+  }
+
   private resetConversation(): void {
     this.stopRevealTimer();
     this.closeActiveSession();
+    this.stopSpeakingMessage(false);
+    this.answerVariantsByMessageId.clear();
     this.conversationId = '';
+    this.serviceConversationId = '';
     this.isSending = false;
+    this.shouldAutoScrollToBottom = true;
     this.statusText = '请先填写 HiAgent 的 Api URL、ApiKey 和 UserID。';
     this.messages = this.buildGuideMessages();
-    this.scrollToBottom();
+    this.scrollToBottom(true);
+  }
+
+  private startNewConversation(): void {
+    this.resetConversation();
+    this.scheduleConfigSave();
   }
 
   private restoreSavedConfig(): void {
@@ -293,8 +507,12 @@ struct Index {
       this.apiUrl = this.readStoredString(Index.KEY_API_URL, '');
       this.apiKey = this.readStoredString(Index.KEY_API_KEY, '');
       this.userId = this.readStoredString(Index.KEY_USER_ID, 'demo-user');
+      this.conversationId = this.readStoredString(Index.KEY_CONVERSATION_ID, '');
       this.isConfigExpanded = this.readStoredBoolean(Index.KEY_CONFIG_EXPANDED, true);
-      if (this.buildConfig().isReady()) {
+      if (this.buildConfig().isReady() && this.conversationId.trim().length > 0) {
+        this.statusText = `已恢复上次会话 ${this.shortenId(this.conversationId)}，正在同步历史...`;
+        void this.syncHistory();
+      } else if (this.buildConfig().isReady()) {
         this.statusText = '已恢复上次配置，可以直接发送。';
       }
     } catch (_error) {
@@ -340,6 +558,7 @@ struct Index {
       this.configStore.putSync(Index.KEY_API_URL, this.apiUrl);
       this.configStore.putSync(Index.KEY_API_KEY, this.apiKey);
       this.configStore.putSync(Index.KEY_USER_ID, this.userId);
+      this.configStore.putSync(Index.KEY_CONVERSATION_ID, this.conversationId);
       this.configStore.putSync(Index.KEY_CONFIG_EXPANDED, this.isConfigExpanded);
       this.configStore.flushSync();
     } catch (_error) {
@@ -377,21 +596,31 @@ struct Index {
     }
 
     const nextMessages: Array<ChatMessage> = this.messages.slice();
-    nextMessages.push(ChatMessage.user(this.createMessageId('user'), prompt));
+    const userMessage: ChatMessage = ChatMessage.user(this.createMessageId('user'), prompt);
+    userMessage.conversationId = this.conversationId;
+    nextMessages.push(userMessage);
     const assistantMessageId: string = this.createMessageId('assistant');
     const assistantMessage: ChatMessage = ChatMessage.assistant(assistantMessageId, '', '', true);
+    assistantMessage.conversationId = this.conversationId;
     assistantMessage.streamCompleted = false;
+    this.applyMessagePhase(assistantMessage, ChatMessagePhase.Sending, '发送中');
+    const initialVariants: Array<ChatAnswerVariant> = [this.createAnswerVariantFromMessage(assistantMessage)];
+    this.replaceAnswerVariants(assistantMessage.id, initialVariants);
+    this.applyAnswerVariantMeta(assistantMessage, initialVariants);
     nextMessages.push(assistantMessage);
     this.messages = nextMessages;
     this.activeAssistantMessageId = assistantMessageId;
     this.isSending = true;
     this.draft = '';
     this.statusText = this.conversationId.length > 0 ? `会话 ${this.shortenId(this.conversationId)} 已连接，正在发送...` : '正在创建会话...';
-    this.scrollToBottom();
+    this.shouldAutoScrollToBottom = true;
+    this.scrollToBottom(true);
     this.startRevealTimer(assistantMessageId);
 
     try {
       const appConversationId: string = await this.ensureConversation(config);
+      this.bindPendingMessagesToConversation(appConversationId, assistantMessageId);
+      this.updateAssistantPhase(assistantMessageId, ChatMessagePhase.Sending, '发送中', 'request_start');
       this.statusText = `会话 ${this.shortenId(appConversationId)} 已连接，正在等待模型响应...`;
       this.activeStreamSession = HiAgentService.startChatStream(
         config,
@@ -435,9 +664,12 @@ struct Index {
         this.conversationId,
         100
       );
+      this.answerVariantsByMessageId.clear();
       this.messages = this.buildHistoryMessages(historyMessages);
       this.statusText = historyMessages.length > 0 ? `已同步 ${historyMessages.length} 条历史记录。` : '当前会话还没有历史消息。';
-      this.scrollToBottom();
+      void this.hydrateHistoryAnswerVariants();
+      this.shouldAutoScrollToBottom = true;
+      this.scrollToBottom(true);
     } catch (error) {
       this.statusText = `同步历史失败：${this.stringifyError(error)}`;
     }
@@ -488,10 +720,7 @@ struct Index {
         const nextLength: number = Math.min(message.rawContent.length, message.visibleContent.length + this.revealChunkSize);
         nextMessage.visibleContent = message.rawContent.substring(0, nextLength);
         nextMessage.isStreaming = true;
-
-        const nextMessages: Array<ChatMessage> = this.messages.slice();
-        nextMessages[messageIndex] = nextMessage;
-        this.messages = nextMessages;
+        this.applyMessageToList(messageIndex, nextMessage);
         this.scrollToBottom();
         return;
       }
@@ -500,9 +729,7 @@ struct Index {
         if (message.isStreaming) {
           const nextMessage: ChatMessage = message.copy();
           nextMessage.isStreaming = false;
-          const nextMessages: Array<ChatMessage> = this.messages.slice();
-          nextMessages[messageIndex] = nextMessage;
-          this.messages = nextMessages;
+          this.applyMessageToList(messageIndex, nextMessage);
         }
         this.stopRevealTimer();
       }
@@ -517,10 +744,21 @@ struct Index {
     this.activeRevealMessageId = '';
   }
 
-  private scrollToBottom(): void {
+  private scrollToBottom(force: boolean = false): void {
+    if (!force && !this.shouldAutoScrollToBottom) {
+      return;
+    }
     setTimeout(() => {
       this.messageScroller.scrollEdge(Edge.Bottom);
     }, 30);
+  }
+
+  private safeIsAtEnd(): boolean {
+    try {
+      return this.messageScroller.isAtEnd();
+    } catch (_error) {
+      return this.shouldAutoScrollToBottom;
+    }
   }
 
   private findMessageIndex(messageId: string): number {
@@ -530,6 +768,229 @@ struct Index {
       }
     }
     return -1;
+  }
+
+  private getMessageById(messageId: string): ChatMessage | null {
+    const messageIndex: number = this.findMessageIndex(messageId);
+    if (messageIndex < 0) {
+      return null;
+    }
+    return this.messages[messageIndex];
+  }
+
+  private ensureAnswerVariants(message: ChatMessage): Array<ChatAnswerVariant> {
+    const existingVariants: Array<ChatAnswerVariant> | undefined = this.answerVariantsByMessageId.get(message.id);
+    if (existingVariants !== undefined) {
+      this.applyAnswerVariantMeta(message, existingVariants);
+      return existingVariants;
+    }
+
+    if (message.role !== MessageRole.Assistant) {
+      return [];
+    }
+
+    const variants: Array<ChatAnswerVariant> = [this.createAnswerVariantFromMessage(message)];
+    this.answerVariantsByMessageId.set(message.id, variants);
+    this.applyAnswerVariantMeta(message, variants);
+    return variants;
+  }
+
+  private createAnswerVariantFromMessage(message: ChatMessage): ChatAnswerVariant {
+    const variant: ChatAnswerVariant = new ChatAnswerVariant(
+      message.serviceMessageId.length > 0 ? message.serviceMessageId : this.createMessageId(`variant-${message.id}`),
+      message.rawContent,
+      message.visibleContent
+    );
+    variant.serviceMessageId = message.serviceMessageId;
+    variant.taskId = message.taskId;
+    variant.createdAt = message.createdAt;
+    variant.feedback = message.feedback;
+    variant.isStreaming = message.isStreaming;
+    variant.streamCompleted = message.streamCompleted;
+    variant.streamPhase = message.streamPhase;
+    variant.statusLabel = message.statusLabel;
+    variant.lastEvent = message.lastEvent;
+    return variant;
+  }
+
+  private applyAnswerVariantMeta(message: ChatMessage, variants: Array<ChatAnswerVariant>): void {
+    message.answerVersionCount = variants.length;
+    if (variants.length === 0) {
+      message.activeAnswerVersionIndex = 0;
+      return;
+    }
+    if (message.activeAnswerVersionIndex < 0) {
+      message.activeAnswerVersionIndex = 0;
+    }
+    if (message.activeAnswerVersionIndex >= variants.length) {
+      message.activeAnswerVersionIndex = variants.length - 1;
+    }
+  }
+
+  private syncMessageToActiveVariant(message: ChatMessage): void {
+    if (message.role !== MessageRole.Assistant) {
+      return;
+    }
+
+    const variants: Array<ChatAnswerVariant> = this.ensureAnswerVariants(message);
+    if (variants.length === 0) {
+      return;
+    }
+
+    const activeVariant: ChatAnswerVariant = variants[message.activeAnswerVersionIndex];
+    activeVariant.rawContent = message.rawContent;
+    activeVariant.visibleContent = message.visibleContent;
+    activeVariant.serviceMessageId = message.serviceMessageId;
+    activeVariant.taskId = message.taskId;
+    activeVariant.createdAt = message.createdAt;
+    activeVariant.feedback = message.feedback;
+    activeVariant.isStreaming = message.isStreaming;
+    activeVariant.streamCompleted = message.streamCompleted;
+    activeVariant.streamPhase = message.streamPhase;
+    activeVariant.statusLabel = message.statusLabel;
+    activeVariant.lastEvent = message.lastEvent;
+  }
+
+  private applyActiveVariantToMessage(message: ChatMessage): void {
+    if (message.role !== MessageRole.Assistant) {
+      return;
+    }
+
+    const variants: Array<ChatAnswerVariant> = this.ensureAnswerVariants(message);
+    if (variants.length === 0) {
+      return;
+    }
+
+    const activeVariant: ChatAnswerVariant = variants[message.activeAnswerVersionIndex];
+    message.rawContent = activeVariant.rawContent;
+    message.visibleContent = activeVariant.visibleContent;
+    message.serviceMessageId = activeVariant.serviceMessageId;
+    message.taskId = activeVariant.taskId;
+    message.createdAt = activeVariant.createdAt;
+    message.feedback = activeVariant.feedback;
+    message.isStreaming = activeVariant.isStreaming;
+    message.streamCompleted = activeVariant.streamCompleted;
+    message.streamPhase = activeVariant.streamPhase;
+    message.statusLabel = activeVariant.statusLabel;
+    message.lastEvent = activeVariant.lastEvent;
+  }
+
+  private replaceAnswerVariants(messageId: string, variants: Array<ChatAnswerVariant>): void {
+    this.answerVariantsByMessageId.set(messageId, variants);
+  }
+
+  private getActiveAnswerVariant(message: ChatMessage): ChatAnswerVariant | null {
+    const variants: Array<ChatAnswerVariant> = this.ensureAnswerVariants(message);
+    if (variants.length === 0) {
+      return null;
+    }
+    return variants[message.activeAnswerVersionIndex];
+  }
+
+  private cloneAnswerVariants(messageId: string): Array<ChatAnswerVariant> {
+    const variants: Array<ChatAnswerVariant> | undefined = this.answerVariantsByMessageId.get(messageId);
+    if (variants === undefined) {
+      return [];
+    }
+    const nextVariants: Array<ChatAnswerVariant> = [];
+    for (let index: number = 0; index < variants.length; index++) {
+      nextVariants.push(variants[index].copy());
+    }
+    return nextVariants;
+  }
+
+  private buildOrderedVariantsFromMessageInfo(messageInfo: HiAgentMessageInfo): Array<ChatAnswerVariant> {
+    const historyVariants: Array<ChatAnswerVariant> = [];
+    for (let index: number = 0; index < messageInfo.otherAnswers.length; index++) {
+      historyVariants.push(this.buildVariantFromAnswerInfo(messageInfo.otherAnswers[index]));
+    }
+    historyVariants.sort((left: ChatAnswerVariant, right: ChatAnswerVariant) => left.createdAt - right.createdAt);
+
+    const currentVariant: ChatAnswerVariant = this.buildVariantFromAnswerInfo(messageInfo.answerInfo);
+    historyVariants.push(currentVariant);
+    return historyVariants;
+  }
+
+  private buildVariantMergeKey(variant: ChatAnswerVariant): string {
+    if (variant.serviceMessageId.trim().length > 0) {
+      return `id:${variant.serviceMessageId.trim()}`;
+    }
+    const rawKey: string = variant.rawContent.trim();
+    if (rawKey.length > 0) {
+      return `raw:${rawKey}`;
+    }
+    return `local:${variant.id}`;
+  }
+
+  private mergeLocalHistoryVariants(messageId: string, fetchedVariants: Array<ChatAnswerVariant>): Array<ChatAnswerVariant> {
+    if (fetchedVariants.length === 0) {
+      return this.cloneAnswerVariants(messageId);
+    }
+
+    const mergedHistory: Array<ChatAnswerVariant> = [];
+    const mergedKeys: Set<string> = new Set<string>();
+    const fetchedCurrent: ChatAnswerVariant = fetchedVariants[fetchedVariants.length - 1];
+    const fetchedCurrentKey: string = this.buildVariantMergeKey(fetchedCurrent);
+
+    const pushHistoryVariant = (variant: ChatAnswerVariant): void => {
+      if (variant.rawContent.trim().length === 0 && variant.visibleContent.trim().length === 0) {
+        return;
+      }
+      const variantKey: string = this.buildVariantMergeKey(variant);
+      if (variantKey === fetchedCurrentKey || mergedKeys.has(variantKey)) {
+        return;
+      }
+      mergedKeys.add(variantKey);
+      mergedHistory.push(variant);
+    };
+
+    const localVariants: Array<ChatAnswerVariant> = this.cloneAnswerVariants(messageId);
+    for (let index: number = 0; index < localVariants.length; index++) {
+      pushHistoryVariant(localVariants[index]);
+    }
+
+    for (let index: number = 0; index < fetchedVariants.length - 1; index++) {
+      pushHistoryVariant(fetchedVariants[index]);
+    }
+
+    mergedHistory.sort((left: ChatAnswerVariant, right: ChatAnswerVariant) => left.createdAt - right.createdAt);
+    mergedHistory.push(fetchedCurrent);
+    return mergedHistory;
+  }
+
+  private buildPendingQueryAgainVariant(localMessageId: string): ChatAnswerVariant {
+    const pendingVariant: ChatAnswerVariant = new ChatAnswerVariant(this.createMessageId(`variant-${localMessageId}`));
+    pendingVariant.createdAt = Date.now();
+    pendingVariant.isStreaming = true;
+    pendingVariant.streamCompleted = false;
+    pendingVariant.streamPhase = ChatMessagePhase.Sending;
+    pendingVariant.statusLabel = '发送中';
+    pendingVariant.lastEvent = 'query_again';
+    return pendingVariant;
+  }
+
+  private resolveRefreshLookupMessageId(message: ChatMessage, fallbackMessageId: string = ''): string {
+    if (message.serviceMessageId.trim().length > 0) {
+      return message.serviceMessageId.trim();
+    }
+
+    const variants: Array<ChatAnswerVariant> | undefined = this.answerVariantsByMessageId.get(message.id);
+    if (variants !== undefined) {
+      for (let index: number = variants.length - 1; index >= 0; index--) {
+        if (variants[index].serviceMessageId.trim().length > 0) {
+          return variants[index].serviceMessageId.trim();
+        }
+      }
+    }
+
+    return fallbackMessageId.trim();
+  }
+
+  private applyMessageToList(messageIndex: number, nextMessage: ChatMessage): void {
+    this.syncMessageToActiveVariant(nextMessage);
+    const nextMessages: Array<ChatMessage> = this.messages.slice();
+    nextMessages[messageIndex] = nextMessage;
+    this.messages = nextMessages;
   }
 
   private buildGuideMessages(): Array<ChatMessage> {
@@ -583,13 +1044,43 @@ struct Index {
         );
         assistantMessage.streamCompleted = true;
         assistantMessage.conversationId = this.conversationId;
+        assistantMessage.queryId = historyMessage.queryId;
         assistantMessage.serviceMessageId = historyMessage.messageId;
         assistantMessage.taskId = historyMessage.taskId;
         assistantMessage.createdAt = historyMessage.createdTime * 1000;
+        const variants: Array<ChatAnswerVariant> = [this.createAnswerVariantFromMessage(assistantMessage)];
+        this.replaceAnswerVariants(assistantMessage.id, variants);
+        this.applyAnswerVariantMeta(assistantMessage, variants);
         nextMessages.push(assistantMessage);
       }
     }
     return nextMessages;
+  }
+
+  private async hydrateHistoryAnswerVariants(): Promise<void> {
+    const assistantMessageIds: Array<string> = [];
+    for (let index: number = 0; index < this.messages.length; index++) {
+      const message: ChatMessage = this.messages[index];
+      if (message.role !== MessageRole.Assistant) {
+        continue;
+      }
+      if (message.serviceMessageId.trim().length === 0) {
+        continue;
+      }
+      assistantMessageIds.push(message.id);
+    }
+
+    for (let index: number = 0; index < assistantMessageIds.length; index++) {
+      const localMessageId: string = assistantMessageIds[index];
+      const message: ChatMessage | null = this.getMessageById(localMessageId);
+      if (message === null) {
+        continue;
+      }
+      if (this.resolveAnswerVersionCount(message) > 1) {
+        continue;
+      }
+      await this.refreshMessageVariants(localMessageId, message.serviceMessageId);
+    }
   }
 
   private async ensureConversation(config: HiAgentConfig): Promise<string> {
@@ -599,6 +1090,7 @@ struct Index {
 
     const conversation = await HiAgentService.createConversation(config);
     this.conversationId = conversation.appConversationId;
+    this.scheduleConfigSave();
     return conversation.appConversationId;
   }
 
@@ -609,41 +1101,65 @@ struct Index {
     }
 
     const nextMessage: ChatMessage = this.messages[messageIndex].copy();
+    const normalizedEventName: string = this.normalizeStreamEventName(event.event);
     if (event.conversationId.length > 0) {
       nextMessage.conversationId = event.conversationId;
-      this.conversationId = event.conversationId;
-    }
-    if (event.messageId.length > 0) {
-      nextMessage.serviceMessageId = event.messageId;
+      this.serviceConversationId = event.conversationId;
+    } else if (nextMessage.conversationId.length === 0 && this.conversationId.length > 0) {
+      nextMessage.conversationId = this.conversationId;
     }
     if (event.taskId.length > 0) {
       nextMessage.taskId = event.taskId;
     }
-    if (event.answer.length > 0) {
-      nextMessage.rawContent = this.mergeStreamAnswer(nextMessage.rawContent, event.answer, event.event === 'message_replace');
+    nextMessage.serviceMessageId = this.resolveServiceMessageId(nextMessage, event, normalizedEventName);
+    if (normalizedEventName.length > 0) {
+      nextMessage.lastEvent = normalizedEventName;
     }
 
-    nextMessage.isStreaming = true;
-    nextMessage.streamCompleted = false;
+    if (this.isKeepAliveEvent(normalizedEventName)) {
+      return;
+    }
 
-    const nextMessages: Array<ChatMessage> = this.messages.slice();
-    nextMessages[messageIndex] = nextMessage;
-    this.messages = nextMessages;
-    this.statusText = '正在流式渲染 Markdown 内容...';
+    if (this.shouldAppendAnswer(normalizedEventName, event)) {
+      nextMessage.rawContent = this.mergeStreamAnswer(nextMessage.rawContent, event.answer, normalizedEventName === 'message_replace');
+    }
+
+    if (this.isErrorEvent(normalizedEventName, event.status)) {
+      this.failAssistantMessage(localMessageId, this.extractEventErrorMessage(event));
+      return;
+    }
+
+    const phase: ChatMessagePhase = this.resolveStreamPhase(nextMessage, event, normalizedEventName);
+    const phaseLabel: string = this.resolvePhaseLabel(phase, event, normalizedEventName, nextMessage.statusLabel);
+    this.applyMessagePhase(nextMessage, phase, phaseLabel, normalizedEventName);
+    if (phase === ChatMessagePhase.Stopped && nextMessage.rawContent.trim().length === 0) {
+      nextMessage.rawContent = '已停止本次生成。';
+    }
+    nextMessage.streamCompleted = phase === ChatMessagePhase.Finished || phase === ChatMessagePhase.Stopped;
+    nextMessage.isStreaming = !nextMessage.streamCompleted || nextMessage.visibleContent.length < nextMessage.rawContent.length;
+
+    this.applyMessageToList(messageIndex, nextMessage);
+    this.statusText = this.resolveStatusTextByPhase(phase, phaseLabel);
     this.scrollToBottom();
+
+    if (phase === ChatMessagePhase.Finished || phase === ChatMessagePhase.Stopped) {
+      this.finishSending(this.resolveStatusTextByPhase(phase, phaseLabel));
+      void this.refreshMessageVariants(localMessageId, nextMessage.serviceMessageId);
+    }
   }
 
-  private completeAssistantMessage(localMessageId: string, statusText: string): void {
+  private completeAssistantMessage(localMessageId: string, statusText: string, fallbackLookupMessageId: string = ''): void {
     const messageIndex: number = this.findMessageIndex(localMessageId);
     if (messageIndex >= 0) {
       const nextMessage: ChatMessage = this.messages[messageIndex].copy();
+      this.applyMessagePhase(nextMessage, ChatMessagePhase.Finished, '已结束', nextMessage.lastEvent);
       nextMessage.streamCompleted = true;
       if (nextMessage.visibleContent.length >= nextMessage.rawContent.length) {
         nextMessage.isStreaming = false;
       }
-      const nextMessages: Array<ChatMessage> = this.messages.slice();
-      nextMessages[messageIndex] = nextMessage;
-      this.messages = nextMessages;
+      this.applyMessageToList(messageIndex, nextMessage);
+      const lookupMessageId: string = this.resolveRefreshLookupMessageId(nextMessage, fallbackLookupMessageId);
+      void this.refreshMessageVariants(localMessageId, lookupMessageId);
     }
     this.finishSending(statusText);
   }
@@ -655,12 +1171,10 @@ struct Index {
       nextMessage.rawContent = nextMessage.rawContent.length > 0
         ? `${nextMessage.rawContent}\n\n> 接口错误：${errorMessage}`
         : `> 接口错误\n\n${errorMessage}`;
+      this.applyMessagePhase(nextMessage, ChatMessagePhase.Error, '出错', 'error');
       nextMessage.streamCompleted = true;
       nextMessage.isStreaming = true;
-
-      const nextMessages: Array<ChatMessage> = this.messages.slice();
-      nextMessages[messageIndex] = nextMessage;
-      this.messages = nextMessages;
+      this.applyMessageToList(messageIndex, nextMessage);
       this.startRevealTimer(localMessageId);
     }
     this.finishSending(`请求失败：${errorMessage}`);
@@ -676,16 +1190,17 @@ struct Index {
     if (nextMessage.rawContent.trim().length === 0) {
       nextMessage.rawContent = '已停止本次生成。';
     }
+    this.applyMessagePhase(nextMessage, ChatMessagePhase.Stopped, '已停止', 'stopped');
     nextMessage.streamCompleted = true;
     nextMessage.isStreaming = true;
-
-    const nextMessages: Array<ChatMessage> = this.messages.slice();
-    nextMessages[messageIndex] = nextMessage;
-    this.messages = nextMessages;
+    this.applyMessageToList(messageIndex, nextMessage);
     this.startRevealTimer(localMessageId);
   }
 
   private finishSending(statusText: string): void {
+    if (this.activeStreamSession !== null) {
+      this.activeStreamSession.close();
+    }
     this.activeStreamSession = null;
     this.activeAssistantMessageId = '';
     this.isSending = false;
@@ -700,27 +1215,385 @@ struct Index {
     this.activeAssistantMessageId = '';
   }
 
+  private bindPendingMessagesToConversation(appConversationId: string, assistantMessageId: string): void {
+    if (appConversationId.trim().length === 0) {
+      return;
+    }
+
+    let assistantBound: boolean = false;
+    let userBound: boolean = false;
+    const nextMessages: Array<ChatMessage> = this.messages.slice();
+    for (let index: number = nextMessages.length - 1; index >= 0; index--) {
+      const nextMessage: ChatMessage = nextMessages[index].copy();
+      if (!assistantBound && nextMessage.id === assistantMessageId) {
+        nextMessage.conversationId = appConversationId;
+        nextMessages[index] = nextMessage;
+        assistantBound = true;
+        continue;
+      }
+
+      if (!userBound && nextMessage.role === 'user' && nextMessage.conversationId.trim().length === 0) {
+        nextMessage.conversationId = appConversationId;
+        nextMessages[index] = nextMessage;
+        userBound = true;
+      }
+
+      if (assistantBound && userBound) {
+        break;
+      }
+    }
+    this.messages = nextMessages;
+  }
+
+  private applyMessagePhase(message: ChatMessage, phase: ChatMessagePhase, label: string, eventName: string = ''): void {
+    message.streamPhase = phase;
+    message.statusLabel = label;
+    if (eventName.length > 0) {
+      message.lastEvent = eventName;
+    }
+  }
+
+  private updateAssistantPhase(localMessageId: string, phase: ChatMessagePhase, label: string,
+    eventName: string = ''): void {
+    const messageIndex: number = this.findMessageIndex(localMessageId);
+    if (messageIndex < 0) {
+      return;
+    }
+
+    const nextMessage: ChatMessage = this.messages[messageIndex].copy();
+    this.applyMessagePhase(nextMessage, phase, label, eventName);
+    this.applyMessageToList(messageIndex, nextMessage);
+  }
+
+  private resolveStreamPhase(message: ChatMessage, event: HiAgentStreamEvent, eventName: string): ChatMessagePhase {
+    if (this.isStoppedEvent(eventName)) {
+      return ChatMessagePhase.Stopped;
+    }
+    if (this.isTerminalEvent(eventName, event.status)) {
+      return ChatMessagePhase.Finished;
+    }
+    if (this.isAnsweringEvent(eventName, event)) {
+      return ChatMessagePhase.Answering;
+    }
+    if (this.isThinkingEvent(eventName, event.status, event.thought)) {
+      return ChatMessagePhase.Thinking;
+    }
+    if (this.isProgressOnlyEvent(eventName)) {
+      return message.streamPhase;
+    }
+    if (message.rawContent.trim().length > 0) {
+      return ChatMessagePhase.Answering;
+    }
+    return ChatMessagePhase.Thinking;
+  }
+
+  private resolvePhaseLabel(phase: ChatMessagePhase, event: HiAgentStreamEvent, eventName: string,
+    currentLabel: string): string {
+    const eventLabel: string = this.resolveEventLabel(eventName, phase, event);
+    if (eventLabel.length > 0) {
+      return eventLabel;
+    }
+    if (phase === ChatMessagePhase.Sending) {
+      return '发送中';
+    }
+    if (phase === ChatMessagePhase.Thinking) {
+      if (event.status.toLowerCase() === 'queued') {
+        return '排队中';
+      }
+      return 'AI 正在思考中';
+    }
+    if (phase === ChatMessagePhase.Answering) {
+      return '回答中';
+    }
+    if (phase === ChatMessagePhase.Finished) {
+      return '已结束';
+    }
+    if (phase === ChatMessagePhase.Stopped) {
+      return '已停止';
+    }
+    if (phase === ChatMessagePhase.Error) {
+      return '出错';
+    }
+    return currentLabel;
+  }
+
+  private resolveStatusTextByPhase(phase: ChatMessagePhase, phaseLabel: string): string {
+    if (phase === ChatMessagePhase.Sending) {
+      return '消息发送中...';
+    }
+    if (phase === ChatMessagePhase.Thinking) {
+      return phaseLabel.length > 0 && phaseLabel !== 'AI 正在思考中'
+        ? `AI 正在思考中：${phaseLabel}...`
+        : 'AI 正在思考中...';
+    }
+    if (phase === ChatMessagePhase.Answering) {
+      return phaseLabel.length > 0 && phaseLabel !== '回答中'
+        ? `AI 正在回答中：${phaseLabel}...`
+        : 'AI 正在回答中...';
+    }
+    if (phase === ChatMessagePhase.Finished) {
+      return '回答已结束。';
+    }
+    if (phase === ChatMessagePhase.Stopped) {
+      return '已停止当前回复。';
+    }
+    if (phase === ChatMessagePhase.Error) {
+      return '当前回复出错。';
+    }
+    return this.statusText;
+  }
+
+  private normalizeStreamEventName(eventName: string): string {
+    return eventName.trim().toLowerCase();
+  }
+
+  private shouldAppendAnswer(eventName: string, event: HiAgentStreamEvent): boolean {
+    const normalizedAnswer: string = this.normalizeStreamText(event.answer);
+    if (normalizedAnswer.length === 0) {
+      return false;
+    }
+    return eventName === 'message' || eventName === 'message_replace' || eventName.length === 0;
+  }
+
+  private isAnsweringEvent(eventName: string, event: HiAgentStreamEvent): boolean {
+    return eventName === 'message_output_start' ||
+      eventName === 'message' ||
+      eventName === 'message_replace' ||
+      eventName === 'message_output_end' ||
+      (eventName.length === 0 && this.normalizeStreamText(event.answer).length > 0);
+  }
+
+  private isKeepAliveEvent(eventName: string): boolean {
+    return eventName === 'ping' || eventName === 'keepalive' || eventName === 'keep_alive';
+  }
+
+  private isTerminalEvent(eventName: string, status: string): boolean {
+    const normalizedStatus: string = status.trim().toLowerCase();
+    return eventName === 'message_end' ||
+      eventName === 'message_finish' ||
+      eventName === 'flow_end' ||
+      eventName === 'done' ||
+      eventName === 'finish' ||
+      eventName === 'finished' ||
+      eventName === 'completed' ||
+      normalizedStatus === 'finished' ||
+      normalizedStatus === 'completed' ||
+      normalizedStatus === 'done';
+  }
+
+  private isThinkingEvent(eventName: string, status: string, thought: string): boolean {
+    const normalizedStatus: string = status.trim().toLowerCase();
+    if (thought.trim().length > 0) {
+      return true;
+    }
+    return eventName === 'message_start' ||
+      eventName === 'flow_start' ||
+      eventName === 'agent_thought' ||
+      eventName === 'agent_thought_end' ||
+      eventName === 'think_message_output_start' ||
+      eventName === 'think_message' ||
+      eventName === 'think_message_output_end' ||
+      eventName === 'knowledge_retrieve' ||
+      eventName === 'knowledge_retrieve_end' ||
+      eventName === 'qa_retrieve' ||
+      eventName === 'qa_retrieve_end' ||
+      eventName === 'knowledge_graph_retrieve' ||
+      eventName === 'knowledge_graph_retrieve_end' ||
+      eventName === 'terminology_retrieve' ||
+      eventName === 'terminology_retrieve_end' ||
+      eventName === 'tool_message' ||
+      eventName === 'agent_jump' ||
+      eventName === 'agent_take_over' ||
+      eventName === 'intention' ||
+      eventName === 'thinking' ||
+      eventName === 'thought' ||
+      eventName === 'workflow_started' ||
+      normalizedStatus === 'running' ||
+      normalizedStatus === 'queued';
+  }
+
+  private isErrorEvent(eventName: string, status: string): boolean {
+    const normalizedStatus: string = status.trim().toLowerCase();
+    return eventName === 'error' || eventName === 'message_error' || eventName === 'message_failed' ||
+      normalizedStatus === 'error' ||
+      normalizedStatus === 'failed';
+  }
+
+  private isStoppedEvent(eventName: string): boolean {
+    return eventName === 'interrupted' || eventName === 'stopped';
+  }
+
+  private isProgressOnlyEvent(eventName: string): boolean {
+    return eventName === 'message_cost' || eventName === 'suggestion' || eventName === 'suggestion_cost';
+  }
+
+  private resolveServiceMessageId(message: ChatMessage, event: HiAgentStreamEvent, eventName: string): string {
+    if (event.taskId.trim().length > 0) {
+      return event.taskId.trim();
+    }
+    if (this.isRootMessageEvent(eventName) && event.messageId.trim().length > 0) {
+      return event.messageId.trim();
+    }
+    return message.serviceMessageId;
+  }
+
+  private isRootMessageEvent(eventName: string): boolean {
+    return eventName === 'message_start' ||
+      eventName === 'message_end' ||
+      eventName === 'message_failed' ||
+      eventName === 'interrupted';
+  }
+
+  private resolveEventLabel(eventName: string, phase: ChatMessagePhase, event: HiAgentStreamEvent): string {
+    if (eventName === 'message_start') {
+      return '消息开始';
+    }
+    if (eventName === 'message_output_start') {
+      return '开始输出';
+    }
+    if (eventName === 'message') {
+      return '回答中';
+    }
+    if (eventName === 'message_replace') {
+      return '回答修正中';
+    }
+    if (eventName === 'message_output_end') {
+      return '输出结束';
+    }
+    if (eventName === 'message_end') {
+      return '已结束';
+    }
+    if (eventName === 'message_cost') {
+      return '消息消耗统计';
+    }
+    if (eventName === 'suggestion') {
+      return '问题建议中';
+    }
+    if (eventName === 'suggestion_cost') {
+      return '建议消耗统计';
+    }
+    if (eventName === 'agent_thought' || eventName === 'think_message') {
+      return 'AI 正在思考中';
+    }
+    if (eventName === 'agent_thought_end' || eventName === 'think_message_output_end') {
+      return '思考结束';
+    }
+    if (eventName === 'think_message_output_start') {
+      return '思考开始';
+    }
+    if (eventName === 'knowledge_retrieve') {
+      return '知识库检索中';
+    }
+    if (eventName === 'knowledge_retrieve_end') {
+      return '知识库检索结束';
+    }
+    if (eventName === 'qa_retrieve') {
+      return '问答库检索中';
+    }
+    if (eventName === 'qa_retrieve_end') {
+      return '问答库检索结束';
+    }
+    if (eventName === 'knowledge_graph_retrieve') {
+      return '图谱库检索中';
+    }
+    if (eventName === 'knowledge_graph_retrieve_end') {
+      return '图谱库检索结束';
+    }
+    if (eventName === 'terminology_retrieve') {
+      return '术语库检索中';
+    }
+    if (eventName === 'terminology_retrieve_end') {
+      return '术语库检索结束';
+    }
+    if (eventName === 'agent_jump') {
+      return 'Agent 跳转中';
+    }
+    if (eventName === 'agent_take_over') {
+      return 'Agent 接管回答';
+    }
+    if (eventName === 'intention') {
+      return '意图识别中';
+    }
+    if (eventName === 'tool_message') {
+      return '工具处理中';
+    }
+    if (eventName === 'flow_start') {
+      return '流程开始';
+    }
+    if (eventName === 'flow_end') {
+      return '流程结束';
+    }
+    if (eventName === 'message_failed') {
+      return '消息失败';
+    }
+    if (eventName === 'interrupted') {
+      return '已停止';
+    }
+    if (phase === ChatMessagePhase.Finished) {
+      return '已结束';
+    }
+    return '';
+  }
+
+  private extractEventErrorMessage(event: HiAgentStreamEvent): string {
+    if (event.errorMessage.trim().length > 0) {
+      return event.errorMessage.trim();
+    }
+    if (event.detailMessage.trim().length > 0) {
+      return event.detailMessage.trim();
+    }
+    if (event.rawData.trim().length > 0) {
+      return event.rawData.trim();
+    }
+    return '流式接口返回异常。';
+  }
+
   private buildConfig(): HiAgentConfig {
     return new HiAgentConfig(this.apiUrl, this.apiKey, this.userId);
   }
 
   private mergeStreamAnswer(currentContent: string, incomingContent: string, replaceAll: boolean = false): string {
-    if (incomingContent.length === 0) {
+    const normalizedIncomingContent: string = this.normalizeStreamText(incomingContent);
+    if (normalizedIncomingContent.length === 0) {
       return currentContent;
     }
     if (replaceAll || currentContent.length === 0) {
-      return incomingContent;
+      return normalizedIncomingContent;
     }
-    if (incomingContent === currentContent) {
+    if (normalizedIncomingContent === currentContent) {
       return currentContent;
     }
-    if (incomingContent.startsWith(currentContent)) {
-      return incomingContent;
+    if (normalizedIncomingContent.startsWith(currentContent)) {
+      return normalizedIncomingContent;
     }
-    if (currentContent.indexOf(incomingContent) >= 0) {
+    if (currentContent.endsWith(normalizedIncomingContent)) {
       return currentContent;
     }
-    return `${currentContent}${incomingContent}`;
+
+    const overlapLength: number = this.findStreamOverlapLength(currentContent, normalizedIncomingContent);
+    if (overlapLength > 0) {
+      return `${currentContent}${normalizedIncomingContent.substring(overlapLength)}`;
+    }
+
+    return `${currentContent}${normalizedIncomingContent}`;
+  }
+
+  private normalizeStreamText(content: string): string {
+    let normalized: string = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    if (normalized.indexOf('\n') < 0 && normalized.includes('\\n')) {
+      normalized = normalized.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+    }
+    return normalized;
+  }
+
+  private findStreamOverlapLength(currentContent: string, incomingContent: string): number {
+    const maxOverlap: number = Math.min(currentContent.length, incomingContent.length);
+    for (let length: number = maxOverlap; length > 0; length--) {
+      if (currentContent.substring(currentContent.length - length) === incomingContent.substring(0, length)) {
+        return length;
+      }
+    }
+    return 0;
   }
 
   private shortenId(value: string): string {
@@ -761,6 +1634,531 @@ struct Index {
       return '#166534';
     }
     return '#92400E';
+  }
+
+  private getActionButtonBackground(message: ChatMessage, action: string): string {
+    if (action === 'like' && message.feedback === MessageFeedback.Like) {
+      return '#DBEAFE';
+    }
+    if (action === 'dislike' && message.feedback === MessageFeedback.Dislike) {
+      return '#FEE2E2';
+    }
+    if (action === 'sound' && this.speakingMessageId === message.id) {
+      return '#CCFBF1';
+    }
+    return '#F8FAFC';
+  }
+
+  private getActionIconColor(message: ChatMessage, action: string): string {
+    if (action === 'like' && message.feedback === MessageFeedback.Like) {
+      return '#2563EB';
+    }
+    if (action === 'dislike' && message.feedback === MessageFeedback.Dislike) {
+      return '#DC2626';
+    }
+    if (action === 'sound' && this.speakingMessageId === message.id) {
+      return '#0F766E';
+    }
+    if (action === 'delete') {
+      return '#64748B';
+    }
+    return '#475569';
+  }
+
+  private async copyMessageText(messageId: string): Promise<void> {
+    const message: ChatMessage | null = this.getMessageById(messageId);
+    if (message === null) {
+      return;
+    }
+
+    const plainText: string = message.rawContent.length > 0 ? message.rawContent : message.visibleContent;
+    if (plainText.trim().length === 0) {
+      this.showToast('当前回复还没有内容可复制');
+      return;
+    }
+
+    try {
+      const systemPasteboard = pasteboard.getSystemPasteboard();
+      const data = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, plainText);
+      await systemPasteboard.setData(data);
+      this.showToast('已复制回复内容');
+    } catch (_error) {
+      this.showToast('复制失败，请稍后重试');
+    }
+  }
+
+  private async queryAgainAssistantMessage(messageId: string): Promise<void> {
+    if (this.isSending) {
+      this.showToast('当前已有回复在生成，请稍后再试');
+      return;
+    }
+
+    const messageIndex: number = this.findMessageIndex(messageId);
+    if (messageIndex < 0) {
+      return;
+    }
+
+    const config: HiAgentConfig = this.buildConfig();
+    if (!config.isReady()) {
+      this.showToast('请先填写接口配置');
+      return;
+    }
+
+    const sourceMessage: ChatMessage = this.messages[messageIndex].copy();
+    const existingVariants: Array<ChatAnswerVariant> = this.ensureAnswerVariants(sourceMessage);
+    if (existingVariants.length > 0) {
+      this.syncMessageToActiveVariant(sourceMessage);
+    }
+
+    const activeVariant: ChatAnswerVariant | null = this.getActiveAnswerVariant(sourceMessage);
+    if (activeVariant === null || activeVariant.serviceMessageId.trim().length === 0) {
+      this.showToast('当前回复还没有可重新回答的 messageId');
+      return;
+    }
+    const appConversationId: string = sourceMessage.conversationId.trim().length > 0 ? sourceMessage.conversationId : this.conversationId;
+    if (appConversationId.trim().length === 0) {
+      this.showToast('当前还没有有效的会话 ID');
+      return;
+    }
+
+    const nextVariants: Array<ChatAnswerVariant> = this.cloneAnswerVariants(messageId);
+    const pendingVariant: ChatAnswerVariant = this.buildPendingQueryAgainVariant(messageId);
+    pendingVariant.serviceMessageId = activeVariant.serviceMessageId;
+    pendingVariant.taskId = activeVariant.taskId;
+    nextVariants.push(pendingVariant);
+    this.replaceAnswerVariants(messageId, nextVariants);
+
+    sourceMessage.activeAnswerVersionIndex = nextVariants.length - 1;
+    this.applyActiveVariantToMessage(sourceMessage);
+    sourceMessage.conversationId = appConversationId;
+    sourceMessage.queryId = '';
+    sourceMessage.serviceMessageId = activeVariant.serviceMessageId;
+    sourceMessage.taskId = activeVariant.taskId;
+    sourceMessage.rawContent = '';
+    sourceMessage.visibleContent = '';
+    sourceMessage.feedback = MessageFeedback.None;
+    sourceMessage.createdAt = pendingVariant.createdAt;
+    this.applyMessageToList(messageIndex, sourceMessage);
+    this.activeAssistantMessageId = messageId;
+    this.isSending = true;
+    this.statusText = '正在重新回答这条回复...';
+    this.startRevealTimer(messageId);
+    this.scrollToBottom(true);
+
+    this.activeStreamSession = HiAgentService.startQueryAgainStream(
+      config,
+      appConversationId,
+      activeVariant.serviceMessageId,
+      (event: HiAgentStreamEvent) => {
+        this.handleStreamEvent(messageId, event);
+      },
+      () => {
+        this.completeAssistantMessage(messageId, '重新回答完成。', activeVariant.serviceMessageId);
+      },
+      (errorMessage: string) => {
+        this.failAssistantMessage(messageId, errorMessage);
+      }
+    );
+  }
+
+  private async deleteAssistantMessage(messageId: string): Promise<void> {
+    const messageIndex: number = this.findMessageIndex(messageId);
+    if (messageIndex < 0) {
+      return;
+    }
+
+    const config: HiAgentConfig = this.buildConfig();
+    if (!config.isReady()) {
+      this.showToast('请先填写接口配置');
+      return;
+    }
+
+    const hydratedMessage: ChatMessage | null = await this.ensureMessageInfoLoaded(messageId);
+    if (hydratedMessage === null) {
+      return;
+    }
+    const activeVariant: ChatAnswerVariant | null = this.getActiveAnswerVariant(hydratedMessage);
+    if (activeVariant === null || activeVariant.serviceMessageId.trim().length === 0 || hydratedMessage.queryId.trim().length === 0) {
+      this.showToast('当前回复缺少删除所需的 messageId 或 queryId');
+      return;
+    }
+
+    try {
+      await HiAgentService.deleteMessage(config, activeVariant.serviceMessageId, hydratedMessage.queryId);
+      if (this.speakingMessageId === messageId) {
+        this.stopSpeakingMessage(false);
+      }
+
+      const nextVariants: Array<ChatAnswerVariant> = this.cloneAnswerVariants(messageId);
+      nextVariants.splice(hydratedMessage.activeAnswerVersionIndex, 1);
+      if (nextVariants.length === 0) {
+        this.answerVariantsByMessageId.delete(messageId);
+        const nextMessages: Array<ChatMessage> = this.messages.slice();
+        nextMessages.splice(messageIndex, 1);
+        this.messages = nextMessages;
+      } else {
+        const fallbackIndex: number = Math.min(hydratedMessage.activeAnswerVersionIndex, nextVariants.length - 1);
+        const fallbackMessageId: string = nextVariants[fallbackIndex].serviceMessageId;
+        this.replaceAnswerVariants(messageId, nextVariants);
+        const nextMessage: ChatMessage = hydratedMessage.copy();
+        nextMessage.activeAnswerVersionIndex = fallbackIndex;
+        this.applyActiveVariantToMessage(nextMessage);
+        this.applyMessageToList(messageIndex, nextMessage);
+        if (fallbackMessageId.trim().length > 0) {
+          await this.refreshMessageVariants(messageId, fallbackMessageId);
+        }
+      }
+      this.statusText = '已删除当前回复。';
+    } catch (error) {
+      this.statusText = `删除失败：${this.stringifyError(error)}`;
+      this.showToast('删除当前回复失败');
+    }
+  }
+
+  private async toggleFeedback(messageId: string, nextFeedback: MessageFeedback): Promise<void> {
+    const messageIndex: number = this.findMessageIndex(messageId);
+    if (messageIndex < 0) {
+      return;
+    }
+
+    const config: HiAgentConfig = this.buildConfig();
+    if (!config.isReady()) {
+      this.showToast('请先填写接口配置');
+      return;
+    }
+
+    const nextMessage: ChatMessage = this.messages[messageIndex].copy();
+    const activeVariant: ChatAnswerVariant | null = this.getActiveAnswerVariant(nextMessage);
+    if (activeVariant === null || activeVariant.serviceMessageId.trim().length === 0) {
+      this.showToast('当前回复还没有可反馈的 messageId');
+      return;
+    }
+
+    const targetFeedback: MessageFeedback = nextMessage.feedback === nextFeedback ? MessageFeedback.None : nextFeedback;
+    try {
+      await HiAgentService.feedback(config, activeVariant.serviceMessageId, this.toLikeType(targetFeedback));
+      nextMessage.feedback = targetFeedback;
+      this.applyMessageToList(messageIndex, nextMessage);
+
+      if (targetFeedback === MessageFeedback.Like) {
+        this.showToast('已点赞这条回复');
+        return;
+      }
+      if (targetFeedback === MessageFeedback.Dislike) {
+        this.showToast('已点踩这条回复');
+        return;
+      }
+      this.showToast('已取消反馈');
+    } catch (error) {
+      this.statusText = `反馈失败：${this.stringifyError(error)}`;
+      this.showToast('反馈设置失败');
+    }
+  }
+
+  private async switchAnswerVariant(messageId: string, offset: number): Promise<void> {
+    const messageIndex: number = this.findMessageIndex(messageId);
+    if (messageIndex < 0) {
+      return;
+    }
+
+    const config: HiAgentConfig = this.buildConfig();
+    if (!config.isReady()) {
+      this.showToast('请先填写接口配置');
+      return;
+    }
+
+    const hydratedMessage: ChatMessage | null = await this.ensureMessageInfoLoaded(messageId);
+    if (hydratedMessage === null) {
+      return;
+    }
+
+    const variants: Array<ChatAnswerVariant> = this.cloneAnswerVariants(messageId);
+    if (variants.length <= 1) {
+      this.showToast('当前只有一个回复版本');
+      return;
+    }
+
+    const nextIndex: number = hydratedMessage.activeAnswerVersionIndex + offset;
+    if (nextIndex < 0 || nextIndex >= variants.length) {
+      return;
+    }
+
+    const targetVariant: ChatAnswerVariant = variants[nextIndex];
+    if (targetVariant.serviceMessageId.trim().length === 0) {
+      this.showToast('当前回复版本还没有有效的 messageId');
+      return;
+    }
+
+    try {
+      await HiAgentService.setMessageAnswerUsed(config, targetVariant.serviceMessageId);
+      const refreshedMessage: ChatMessage | null = await this.refreshMessageVariants(messageId, targetVariant.serviceMessageId);
+      if (refreshedMessage === null) {
+        const nextMessage: ChatMessage = hydratedMessage.copy();
+        nextMessage.activeAnswerVersionIndex = nextIndex;
+        this.applyActiveVariantToMessage(nextMessage);
+        this.applyMessageToList(messageIndex, nextMessage);
+      }
+      this.statusText = `已切换到第 ${nextIndex + 1}/${variants.length} 个回复。`;
+    } catch (error) {
+      this.statusText = `切换回复失败：${this.stringifyError(error)}`;
+      this.showToast('切换回复失败');
+    }
+  }
+
+  private async ensureMessageInfoLoaded(messageId: string): Promise<ChatMessage | null> {
+    const messageIndex: number = this.findMessageIndex(messageId);
+    if (messageIndex < 0) {
+      return null;
+    }
+
+    const message: ChatMessage = this.messages[messageIndex].copy();
+    if (message.queryId.trim().length > 0 && message.answerVersionCount > 1) {
+      return message;
+    }
+
+    const activeVariant: ChatAnswerVariant | null = this.getActiveAnswerVariant(message);
+    if (activeVariant === null || activeVariant.serviceMessageId.trim().length === 0) {
+      return message;
+    }
+
+    return await this.refreshMessageVariants(messageId, activeVariant.serviceMessageId);
+  }
+
+  private async refreshMessageVariants(messageId: string, lookupMessageId: string): Promise<ChatMessage | null> {
+    if (lookupMessageId.trim().length === 0) {
+      return this.getMessageById(messageId);
+    }
+
+    const config: HiAgentConfig = this.buildConfig();
+    if (!config.isReady()) {
+      return this.getMessageById(messageId);
+    }
+
+    const messageIndex: number = this.findMessageIndex(messageId);
+    if (messageIndex < 0) {
+      return null;
+    }
+
+    try {
+      const messageInfo: HiAgentMessageInfo = await HiAgentService.getMessageInfo(config, lookupMessageId);
+      const fetchedVariants: Array<ChatAnswerVariant> = this.buildOrderedVariantsFromMessageInfo(messageInfo);
+      const nextVariants: Array<ChatAnswerVariant> = this.mergeLocalHistoryVariants(messageId, fetchedVariants);
+
+      const nextMessage: ChatMessage = this.messages[messageIndex].copy();
+      nextMessage.queryId = messageInfo.queryId;
+      if (nextMessage.conversationId.trim().length === 0 && messageInfo.conversationId.trim().length > 0) {
+        nextMessage.conversationId = messageInfo.conversationId;
+      }
+
+      this.replaceAnswerVariants(messageId, nextVariants);
+      const activeIndex: number = nextVariants.length > 0 ? nextVariants.length - 1 : 0;
+      nextMessage.activeAnswerVersionIndex = activeIndex;
+      this.applyActiveVariantToMessage(nextMessage);
+      this.applyMessageToList(messageIndex, nextMessage);
+      return this.messages[messageIndex];
+    } catch (error) {
+      this.statusText = `读取回复详情失败：${this.stringifyError(error)}`;
+      return this.getMessageById(messageId);
+    }
+  }
+
+  private buildVariantFromAnswerInfo(answerInfo: HiAgentMessageAnswerInfo): ChatAnswerVariant {
+    const variant: ChatAnswerVariant = new ChatAnswerVariant(
+      answerInfo.messageId.length > 0 ? answerInfo.messageId : this.createMessageId('answer'),
+      answerInfo.answer,
+      answerInfo.answer
+    );
+    variant.serviceMessageId = answerInfo.messageId;
+    variant.taskId = answerInfo.taskId;
+    variant.createdAt = answerInfo.createdTime * 1000;
+    variant.feedback = this.toMessageFeedback(answerInfo.like);
+    variant.isStreaming = false;
+    variant.streamCompleted = true;
+    variant.streamPhase = ChatMessagePhase.Finished;
+    variant.statusLabel = '已结束';
+    return variant;
+  }
+
+  private toLikeType(feedback: MessageFeedback): number {
+    if (feedback === MessageFeedback.Like) {
+      return 1;
+    }
+    if (feedback === MessageFeedback.Dislike) {
+      return -1;
+    }
+    return 0;
+  }
+
+  private toMessageFeedback(likeType: number): MessageFeedback {
+    if (likeType > 0) {
+      return MessageFeedback.Like;
+    }
+    if (likeType < 0) {
+      return MessageFeedback.Dislike;
+    }
+    return MessageFeedback.None;
+  }
+
+  private async toggleSpeakMessage(messageId: string): Promise<void> {
+    if (this.speakingMessageId === messageId) {
+      this.stopSpeakingMessage(true);
+      return;
+    }
+
+    const message: ChatMessage | null = this.getMessageById(messageId);
+    if (message === null) {
+      return;
+    }
+
+    const speechText: string = this.buildSpeechText(message.rawContent.length > 0 ? message.rawContent : message.visibleContent);
+    if (speechText.length === 0) {
+      this.showToast('当前回复还没有可播报的内容');
+      return;
+    }
+
+    try {
+      const engine: textToSpeech.TextToSpeechEngine = await this.ensureSpeechEngine();
+      if (engine.isBusy()) {
+        engine.stop();
+      }
+      this.speakingMessageId = messageId;
+      engine.speak(speechText, {
+        requestId: this.createMessageId(`tts-${messageId}`)
+      });
+      this.statusText = '正在播报这条回复。';
+    } catch (error) {
+      this.speakingMessageId = '';
+      this.statusText = `播报失败：${this.stringifyError(error)}`;
+      this.showToast('播报失败，请确认设备支持语音播报');
+    }
+  }
+
+  private async ensureSpeechEngine(): Promise<textToSpeech.TextToSpeechEngine> {
+    if (this.ttsEngine !== null) {
+      return this.ttsEngine;
+    }
+
+    let selectedVoice: textToSpeech.VoiceInfo | null = null;
+    try {
+      const voices: Array<textToSpeech.VoiceInfo> = await textToSpeech.listVoices({
+        requestId: this.createMessageId('tts-voices'),
+        online: 0
+      });
+      selectedVoice = this.selectPreferredVoice(voices);
+    } catch (_error) {
+      selectedVoice = null;
+    }
+
+    const engine: textToSpeech.TextToSpeechEngine = await textToSpeech.createEngine({
+      language: selectedVoice !== null ? selectedVoice.language : 'zh-CN',
+      person: selectedVoice !== null ? selectedVoice.person : 0,
+      online: 0
+    });
+
+    const listener: textToSpeech.SpeakListener = {
+      onStart: (_requestId: string, _response: textToSpeech.StartResponse): void => {
+        this.statusText = '正在播报这条回复。';
+      },
+      onComplete: (_requestId: string, _response: textToSpeech.CompleteResponse): void => {
+        this.speakingMessageId = '';
+        this.statusText = '播报完成。';
+      },
+      onStop: (_requestId: string, _response: textToSpeech.StopResponse): void => {
+        this.speakingMessageId = '';
+        this.statusText = '已停止播报。';
+      },
+      onError: (_requestId: string, _errorCode: number, errorMessage: string): void => {
+        this.speakingMessageId = '';
+        this.statusText = `播报失败：${errorMessage}`;
+        this.showToast('播报失败，请确认设备支持语音播报');
+      }
+    };
+    engine.setListener(listener);
+    this.ttsEngine = engine;
+    return engine;
+  }
+
+  private selectPreferredVoice(voices: Array<textToSpeech.VoiceInfo>): textToSpeech.VoiceInfo | null {
+    if (voices.length === 0) {
+      return null;
+    }
+
+    for (let index: number = 0; index < voices.length; index++) {
+      if (voices[index].language === 'zh-CN') {
+        return voices[index];
+      }
+    }
+    for (let index: number = 0; index < voices.length; index++) {
+      if (voices[index].language.startsWith('zh')) {
+        return voices[index];
+      }
+    }
+    return voices[0];
+  }
+
+  private stopSpeakingMessage(showToast: boolean): void {
+    if (this.ttsEngine !== null) {
+      try {
+        if (this.ttsEngine.isBusy()) {
+          this.ttsEngine.stop();
+        }
+      } catch (_error) {
+        // Ignore stop errors to avoid blocking chat interactions.
+      }
+    }
+    this.speakingMessageId = '';
+    if (showToast) {
+      this.showToast('已停止播报');
+    }
+  }
+
+  private shutdownSpeechEngine(): void {
+    this.stopSpeakingMessage(false);
+    if (this.ttsEngine === null) {
+      return;
+    }
+    try {
+      this.ttsEngine.shutdown();
+    } catch (_error) {
+      // Ignore speech engine shutdown errors during page destruction.
+    }
+    this.ttsEngine = null;
+  }
+
+  private buildSpeechText(content: string): string {
+    const normalizedText: string = this.normalizeStreamText(content);
+    if (normalizedText.trim().length === 0) {
+      return '';
+    }
+
+    let speechText: string = normalizedText
+      .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
+      .replace(/<img[^>]*alt=["']([^"']*)["'][^>]*>/gi, '$1')
+      .replace(/<img[^>]*>/gi, '图片')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/```[\w-]*\n/g, '代码如下：\n')
+      .replace(/```/g, '')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/^#{1,6}\s*/gm, '')
+      .replace(/^>\s*/gm, '')
+      .replace(/^[-*+]\s+/gm, '')
+      .replace(/^\d+\.\s+/gm, '')
+      .replace(/\|/g, ' ')
+      .replace(/[*_~]/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+    if (speechText.length === 0) {
+      speechText = normalizedText.trim();
+    }
+    return speechText;
+  }
+
+  private showToast(message: string): void {
+    promptAction.showToast({
+      message: message,
+      duration: 1800
+    });
   }
 
   private createMessageId(prefix: string): string {

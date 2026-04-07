@@ -39,5 +39,24 @@ export default function hiAgentSseParserTest() {
       expect(secondResult.events.length).assertEqual(1);
       expect(secondResult.events[0].answer).assertEqual('Hello');
     });
+
+    it('shouldParseThoughtAndStatusFields', 0, () => {
+      const chunk: string = [
+        'event:text',
+        'data: {"event":"agent_thought","status":"running","thought":"searching docs","message":"thinking","task_id":"task-2"}',
+        '',
+        'event:text',
+        'data: {"event":"error","error":"request failed","message":"bad gateway"}',
+        ''
+      ].join('\n');
+
+      const result = HiAgentSseParser.parseChunk(chunk, '');
+      expect(result.events.length).assertEqual(2);
+      expect(result.events[0].event).assertEqual('agent_thought');
+      expect(result.events[0].status).assertEqual('running');
+      expect(result.events[0].thought).assertEqual('searching docs');
+      expect(result.events[0].detailMessage).assertEqual('thinking');
+      expect(result.events[1].errorMessage).assertEqual('request failed');
+    });
   });
 }

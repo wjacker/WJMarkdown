@@ -1,29 +1,43 @@
-import { InlineToken, InlineTokenStyle, MarkdownBlock, MarkdownBlockType } from '../models/MarkdownModels';
+import {
+  InlineToken,
+  InlineTokenStyle,
+  MarkdownBlock,
+  MarkdownBlockType,
+  MarkdownListItem,
+  MarkdownTableAlignment
+} from '../models/MarkdownModels';
 import { CodeLine, CodeSegment, CodeTokenKind } from '../models/CodeHighlightModels';
 import { CodeHighlighter } from '../utils/CodeHighlighter';
 import { MarkdownParser } from '../utils/MarkdownParser';
+import { MathMarkdownWeb } from './MathMarkdownWeb';
 
 @Component
 export struct MarkdownMessage {
   @Prop content: string = '';
   @Prop isStreaming: boolean = false;
   @Prop isAssistant: boolean = true;
+  @Prop streamingLabel: string = 'Streaming...';
 
   build() {
     Column({ space: 12 }) {
-      ForEach(MarkdownParser.parse(this.content), (block: MarkdownBlock) => {
-        this.BlockBuilder(block);
-      }, (block: MarkdownBlock) => block.id)
+      if (this.shouldUseWebMathRenderer()) {
+        MathMarkdownWeb({
+          content: this.content,
+          isAssistant: this.isAssistant
+        })
+      } else {
+        this.BlocksBuilder(MarkdownParser.parse(this.content), 0)
 
-      if (this.isStreaming) {
-        Row({ space: 6 }) {
-          Text('|')
-            .fontSize(16)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(this.getAccentColor())
-          Text('Streaming...')
-            .fontSize(12)
-            .fontColor(this.getSecondaryTextColor())
+        if (this.isStreaming && this.streamingLabel.length > 0) {
+          Row({ space: 6 }) {
+            Text('|')
+              .fontSize(16)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.getAccentColor())
+            Text(this.streamingLabel.length > 0 ? this.streamingLabel : 'Streaming...')
+              .fontSize(12)
+              .fontColor(this.getSecondaryTextColor())
+          }
         }
       }
     }
@@ -31,20 +45,49 @@ export struct MarkdownMessage {
     .alignItems(HorizontalAlign.Start)
   }
 
+  private shouldUseWebMathRenderer(): boolean {
+    return this.content.includes('\\(') ||
+      this.content.includes('\\[') ||
+      this.content.includes('$$') ||
+      /(^|[^\\])\$[^$]/.test(this.content) ||
+      this.content.includes('\\frac') ||
+      this.content.includes('\\left') ||
+      this.content.includes('\\right') ||
+      this.content.includes('\\cdot') ||
+      this.content.includes('\\times') ||
+      this.content.includes('\\sqrt') ||
+      this.content.includes('\\int') ||
+      this.content.includes('\\sum') ||
+      this.content.includes('^{') ||
+      this.content.includes('_{') ||
+      /\([A-Za-z][A-Za-z0-9_^{}]*\)/.test(this.content);
+  }
+
   @Builder
-  private BlockBuilder(block: MarkdownBlock) {
+  private BlocksBuilder(blocks: Array<MarkdownBlock>, nestingLevel: number) {
+    Column({ space: 12 }) {
+      ForEach(blocks, (block: MarkdownBlock) => {
+        this.BlockBuilder(block, nestingLevel);
+      }, (block: MarkdownBlock) => block.id)
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
+
+  @Builder
+  private BlockBuilder(block: MarkdownBlock, nestingLevel: number) {
     if (block.type === MarkdownBlockType.Heading) {
       this.HeadingBuilder(block);
+    } else if (block.type === MarkdownBlockType.Math) {
+      this.MathBlockBuilder(block);
     } else if (block.type === MarkdownBlockType.Code) {
       this.CodeBlockBuilder(block);
     } else if (block.type === MarkdownBlockType.Quote) {
-      this.QuoteBuilder(block);
-    } else if (block.type === MarkdownBlockType.TaskList) {
-      this.TaskListBuilder(block);
-    } else if (block.type === MarkdownBlockType.UnorderedList) {
-      this.BulletListBuilder(block);
-    } else if (block.type === MarkdownBlockType.OrderedList) {
-      this.NumberedListBuilder(block);
+      this.QuoteBuilder(block, nestingLevel);
+    } else if (block.type === MarkdownBlockType.TaskList ||
+      block.type === MarkdownBlockType.UnorderedList ||
+      block.type === MarkdownBlockType.OrderedList) {
+      this.ListBuilder(block, nestingLevel);
     } else if (block.type === MarkdownBlockType.Divider) {
       Divider()
         .color(this.getDividerColor())
@@ -54,17 +97,18 @@ export struct MarkdownMessage {
     } else if (block.type === MarkdownBlockType.Image) {
       this.ImageBuilder(block);
     } else {
-      this.InlineTextBuilder(block.tokens, 15, 24, false);
+      this.InlineTextBuilder(block.tokens, 15, 24, false, TextAlign.Start);
     }
   }
 
   @Builder
   private HeadingBuilder(block: MarkdownBlock) {
-    this.InlineTextBuilder(block.tokens, this.getHeadingSize(block.level), this.getHeadingSize(block.level) + 8, true);
+    this.InlineTextBuilder(block.tokens, this.getHeadingSize(block.level), this.getHeadingSize(block.level) + 8,
+      true, TextAlign.Start);
   }
 
   @Builder
-  private QuoteBuilder(block: MarkdownBlock) {
+  private QuoteBuilder(block: MarkdownBlock, nestingLevel: number) {
     Row({ space: 12 }) {
       Column()
         .width(4)
@@ -73,9 +117,13 @@ export struct MarkdownMessage {
         .backgroundColor(this.getAccentColor())
 
       Column({ space: 8 }) {
-        ForEach(block.items, (itemTokens: Array<InlineToken>, index: number) => {
-          this.InlineTextBuilder(itemTokens, 14, 22, false);
-        }, (_itemTokens: Array<InlineToken>, index: number) => `quote-${index}`)
+        if (block.children.length > 0) {
+          this.BlocksBuilder(block.children, nestingLevel + 1);
+        } else {
+          ForEach(block.items, (itemTokens: Array<InlineToken>, index: number) => {
+            this.InlineTextBuilder(itemTokens, 14, 22, false, TextAlign.Start);
+          }, (_itemTokens: Array<InlineToken>, index: number) => `quote-${index}`)
+        }
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
@@ -87,82 +135,59 @@ export struct MarkdownMessage {
   }
 
   @Builder
-  private BulletListBuilder(block: MarkdownBlock) {
+  private ListBuilder(block: MarkdownBlock, nestingLevel: number) {
     Column({ space: 8 }) {
-      ForEach(block.items, (itemTokens: Array<InlineToken>, index: number) => {
+      ForEach(block.listItems, (item: MarkdownListItem, index: number) => {
         Row({ space: 10 }) {
-          Text('-')
-            .fontSize(16)
-            .fontColor(this.getAccentColor())
-            .padding({ top: 1 })
+          this.ListMarkerBuilder(block, item, index, nestingLevel)
 
-          Column() {
-            this.InlineTextBuilder(itemTokens, 15, 24, false);
+          Column({ space: 8 }) {
+            if (item.blocks.length > 0) {
+              this.BlocksBuilder(item.blocks, nestingLevel + 1);
+            } else {
+              this.InlineTextBuilder(block.items[index], 15, 24, false, TextAlign.Start);
+            }
           }
           .layoutWeight(1)
           .alignItems(HorizontalAlign.Start)
         }
         .width('100%')
         .alignItems(VerticalAlign.Top)
-      }, (_itemTokens: Array<InlineToken>, index: number) => `ul-${index}`)
+      }, (item: MarkdownListItem) => item.id)
     }
     .width('100%')
+    .padding({ left: nestingLevel > 0 ? 6 : 0 })
   }
 
   @Builder
-  private TaskListBuilder(block: MarkdownBlock) {
-    Column({ space: 8 }) {
-      ForEach(block.items, (itemTokens: Array<InlineToken>, index: number) => {
-        Row({ space: 10 }) {
-          Text(block.taskStates[index] ? 'x' : '')
-            .width(18)
-            .height(18)
-            .textAlign(TextAlign.Center)
-            .fontSize(11)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(block.taskStates[index] ? '#FFFFFF' : this.getAccentColor())
-            .backgroundColor(block.taskStates[index] ? this.getAccentColor() : '#00000000')
-            .border({
-              width: 1.2,
-              color: this.getAccentColor()
-            })
-            .borderRadius(6)
-
-          Column() {
-            this.InlineTextBuilder(itemTokens, 15, 24, false);
-          }
-          .layoutWeight(1)
-          .alignItems(HorizontalAlign.Start)
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Top)
-      }, (_itemTokens: Array<InlineToken>, index: number) => `task-${index}`)
+  private ListMarkerBuilder(block: MarkdownBlock, item: MarkdownListItem, index: number, nestingLevel: number) {
+    if (block.type === MarkdownBlockType.TaskList) {
+      Text(item.checked ? 'x' : '')
+        .width(18)
+        .height(18)
+        .textAlign(TextAlign.Center)
+        .fontSize(11)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(item.checked ? '#FFFFFF' : this.getAccentColor())
+        .backgroundColor(item.checked ? this.getAccentColor() : '#00000000')
+        .border({
+          width: 1.2,
+          color: this.getAccentColor()
+        })
+        .borderRadius(6)
+    } else if (block.type === MarkdownBlockType.OrderedList) {
+      Text(`${block.startNumber + index}.`)
+        .width(30)
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.getAccentColor())
+    } else {
+      Text(nestingLevel % 2 === 0 ? '-' : 'o')
+        .width(18)
+        .fontSize(16)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(this.getAccentColor())
     }
-    .width('100%')
-  }
-
-  @Builder
-  private NumberedListBuilder(block: MarkdownBlock) {
-    Column({ space: 8 }) {
-      ForEach(block.items, (itemTokens: Array<InlineToken>, index: number) => {
-        Row({ space: 10 }) {
-          Text(`${block.startNumber + index}.`)
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.getAccentColor())
-            .width(28)
-
-          Column() {
-            this.InlineTextBuilder(itemTokens, 15, 24, false);
-          }
-          .layoutWeight(1)
-          .alignItems(HorizontalAlign.Start)
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Top)
-      }, (_itemTokens: Array<InlineToken>, index: number) => `ol-${index}`)
-    }
-    .width('100%')
   }
 
   @Builder
@@ -196,6 +221,33 @@ export struct MarkdownMessage {
   }
 
   @Builder
+  private MathBlockBuilder(block: MarkdownBlock) {
+    Column({ space: 8 }) {
+      Text('MATH')
+        .fontSize(11)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.isAssistant ? '#2563EB' : '#DBEAFE')
+
+      Text(block.math)
+        .width('100%')
+        .fontSize(16)
+        .lineHeight(26)
+        .fontFamily('monospace')
+        .fontColor(this.isAssistant ? '#0F172A' : '#EFF6FF')
+        .textAlign(TextAlign.Center)
+        .wordBreak(WordBreak.BREAK_WORD)
+    }
+    .width('100%')
+    .padding({ top: 14, right: 16, bottom: 14, left: 16 })
+    .borderRadius(18)
+    .backgroundColor(this.isAssistant ? '#F8FAFF' : '#4C8FE8')
+    .border({
+      width: 1,
+      color: this.isAssistant ? '#DBEAFE' : '#7FB2F6'
+    })
+  }
+
+  @Builder
   private CodeLineBuilder(codeLine: CodeLine) {
     Row({ space: 12 }) {
       Text(`${codeLine.lineNumber}`)
@@ -212,9 +264,11 @@ export struct MarkdownMessage {
             .fontColor(this.getCodeSegmentColor(segment))
         }, (segment: CodeSegment) => segment.id)
       }
+      .width('100%')
       .layoutWeight(1)
       .lineHeight(20)
       .textAlign(TextAlign.Start)
+      .wordBreak(WordBreak.BREAK_ALL)
     }
     .width('100%')
     .alignItems(VerticalAlign.Top)
@@ -226,7 +280,7 @@ export struct MarkdownMessage {
       Row() {
         ForEach(block.headers, (headerTokens: Array<InlineToken>, index: number) => {
           Column() {
-            this.InlineTextBuilder(headerTokens, 13, 20, true);
+            this.InlineTextBuilder(headerTokens, 13, 20, true, this.getTableCellAlign(block, index));
           }
           .layoutWeight(1)
           .padding(12)
@@ -240,7 +294,7 @@ export struct MarkdownMessage {
         Row() {
           ForEach(rowTokens, (cellTokens: Array<InlineToken>, cellIndex: number) => {
             Column() {
-              this.InlineTextBuilder(cellTokens, 13, 20, false);
+              this.InlineTextBuilder(cellTokens, 13, 20, false, this.getTableCellAlign(block, cellIndex));
             }
             .layoutWeight(1)
             .padding(12)
@@ -273,11 +327,20 @@ export struct MarkdownMessage {
           .fontColor(this.isAssistant ? '#334155' : '#E2E8F0')
       }
 
+      if (block.imageTitle.length > 0) {
+        Text(block.imageTitle)
+          .width('100%')
+          .fontSize(12)
+          .lineHeight(18)
+          .fontColor(this.getSecondaryTextColor())
+      }
+
       Text(block.imageUrl)
         .width('100%')
         .fontSize(11)
         .lineHeight(16)
         .fontColor(this.getSecondaryTextColor())
+        .wordBreak(WordBreak.BREAK_ALL)
     }
     .width('100%')
     .padding(12)
@@ -286,7 +349,8 @@ export struct MarkdownMessage {
   }
 
   @Builder
-  private InlineTextBuilder(tokens: Array<InlineToken>, fontSize: number, lineHeight: number, isHeading: boolean) {
+  private InlineTextBuilder(tokens: Array<InlineToken>, fontSize: number, lineHeight: number,
+    isHeading: boolean, textAlign: TextAlign) {
     Text() {
       ForEach(tokens, (token: InlineToken) => {
         Span(token.text)
@@ -304,7 +368,8 @@ export struct MarkdownMessage {
     }
     .width('100%')
     .lineHeight(lineHeight)
-    .textAlign(TextAlign.Start)
+    .textAlign(textAlign)
+    .wordBreak(WordBreak.BREAK_WORD)
   }
 
   private getHeadingSize(level: number): number {
@@ -318,6 +383,20 @@ export struct MarkdownMessage {
       return 18;
     }
     return 16;
+  }
+
+  private getTableCellAlign(block: MarkdownBlock, columnIndex: number): TextAlign {
+    if (columnIndex >= block.tableAlignments.length) {
+      return TextAlign.Start;
+    }
+    const alignment: MarkdownTableAlignment = block.tableAlignments[columnIndex];
+    if (alignment === MarkdownTableAlignment.Center) {
+      return TextAlign.Center;
+    }
+    if (alignment === MarkdownTableAlignment.Right) {
+      return TextAlign.End;
+    }
+    return TextAlign.Start;
   }
 
   private getTokenWeight(token: InlineToken, isHeading: boolean): FontWeight {
@@ -335,13 +414,16 @@ export struct MarkdownMessage {
   }
 
   private getTokenFontFamily(token: InlineToken): string {
-    if ((token.style & InlineTokenStyle.Code) !== 0) {
+    if ((token.style & InlineTokenStyle.Code) !== 0 || (token.style & InlineTokenStyle.Math) !== 0) {
       return 'monospace';
     }
     return 'HarmonyOS Sans';
   }
 
   private getTokenColor(token: InlineToken): string {
+    if ((token.style & InlineTokenStyle.Math) !== 0) {
+      return this.isAssistant ? '#1D4ED8' : '#EFF6FF';
+    }
     if (token.href.length > 0) {
       return this.getAccentColor();
     }
@@ -352,6 +434,9 @@ export struct MarkdownMessage {
   }
 
   private getTokenBackground(token: InlineToken): string {
+    if ((token.style & InlineTokenStyle.Math) !== 0) {
+      return this.isAssistant ? '#EEF4FF' : '#6FA7F3';
+    }
     if ((token.style & InlineTokenStyle.Code) !== 0) {
       return this.isAssistant ? '#EEF2FF' : '#1E3A5F';
     }

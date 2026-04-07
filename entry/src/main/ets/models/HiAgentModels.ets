@@ -60,6 +60,22 @@ export class HiAgentChatQueryRequest {
   }
 }
 
+export class HiAgentQueryAgainRequest {
+  AppKey: string;
+  AppConversationID: string;
+  MessageID: string;
+  ResponseMode: string;
+  UserID: string;
+
+  constructor(appKey: string, appConversationId: string, messageId: string, userId: string) {
+    this.AppKey = appKey;
+    this.AppConversationID = appConversationId;
+    this.MessageID = messageId;
+    this.ResponseMode = 'streaming';
+    this.UserID = userId;
+  }
+}
+
 export class HiAgentGetConversationMessagesRequest {
   AppKey: string;
   AppConversationID: string;
@@ -70,6 +86,18 @@ export class HiAgentGetConversationMessagesRequest {
     this.AppKey = appKey;
     this.AppConversationID = appConversationId;
     this.Limit = limit;
+    this.UserID = userId;
+  }
+}
+
+export class HiAgentGetMessageInfoRequest {
+  AppKey: string;
+  MessageID: string;
+  UserID: string;
+
+  constructor(appKey: string, messageId: string, userId: string) {
+    this.AppKey = appKey;
+    this.MessageID = messageId;
     this.UserID = userId;
   }
 }
@@ -85,6 +113,46 @@ export class HiAgentStopMessageRequest {
     this.UserID = userId;
     this.MessageID = messageId;
     this.TaskID = taskId;
+  }
+}
+
+export class HiAgentDeleteMessageRequest {
+  AppKey: string;
+  MessageID: string;
+  QueryID: string;
+  UserID: string;
+
+  constructor(appKey: string, messageId: string, queryId: string, userId: string) {
+    this.AppKey = appKey;
+    this.MessageID = messageId;
+    this.QueryID = queryId;
+    this.UserID = userId;
+  }
+}
+
+export class HiAgentFeedbackRequest {
+  AppKey: string;
+  MessageID: string;
+  LikeType: number;
+  UserID: string;
+
+  constructor(appKey: string, messageId: string, likeType: number, userId: string) {
+    this.AppKey = appKey;
+    this.MessageID = messageId;
+    this.LikeType = likeType;
+    this.UserID = userId;
+  }
+}
+
+export class HiAgentSetMessageAnswerUsedRequest {
+  AppKey: string;
+  MessageID: string;
+  UserID: string;
+
+  constructor(appKey: string, messageId: string, userId: string) {
+    this.AppKey = appKey;
+    this.MessageID = messageId;
+    this.UserID = userId;
   }
 }
 
@@ -116,10 +184,67 @@ export class HiAgentHistoryMessage {
   }
 }
 
+export class HiAgentMessageAnswerInfo {
+  answer: string;
+  messageId: string;
+  createdTime: number;
+  taskId: string;
+  like: number;
+  totalTokens: number;
+  latency: number;
+  tracingJsonStr: string;
+
+  constructor(
+    answer: string = '',
+    messageId: string = '',
+    createdTime: number = 0,
+    taskId: string = '',
+    like: number = 0,
+    totalTokens: number = 0,
+    latency: number = 0,
+    tracingJsonStr: string = ''
+  ) {
+    this.answer = answer;
+    this.messageId = messageId;
+    this.createdTime = createdTime;
+    this.taskId = taskId;
+    this.like = like;
+    this.totalTokens = totalTokens;
+    this.latency = latency;
+    this.tracingJsonStr = tracingJsonStr;
+  }
+}
+
+export class HiAgentMessageInfo {
+  conversationId: string;
+  queryId: string;
+  query: string;
+  answerInfo: HiAgentMessageAnswerInfo;
+  otherAnswers: Array<HiAgentMessageAnswerInfo>;
+
+  constructor(
+    conversationId: string = '',
+    queryId: string = '',
+    query: string = '',
+    answerInfo: HiAgentMessageAnswerInfo = new HiAgentMessageAnswerInfo(),
+    otherAnswers: Array<HiAgentMessageAnswerInfo> = []
+  ) {
+    this.conversationId = conversationId;
+    this.queryId = queryId;
+    this.query = query;
+    this.answerInfo = answerInfo;
+    this.otherAnswers = otherAnswers;
+  }
+}
+
 export class HiAgentStreamEvent {
   event: string;
   rawData: string;
+  status: string;
   answer: string;
+  thought: string;
+  detailMessage: string;
+  errorMessage: string;
   taskId: string;
   messageId: string;
   conversationId: string;
@@ -131,7 +256,11 @@ export class HiAgentStreamEvent {
   constructor(rawData: string = '') {
     this.event = '';
     this.rawData = rawData;
+    this.status = '';
     this.answer = '';
+    this.thought = '';
+    this.detailMessage = '';
+    this.errorMessage = '';
     this.taskId = '';
     this.messageId = '';
     this.conversationId = '';

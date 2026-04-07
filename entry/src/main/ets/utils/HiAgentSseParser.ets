@@ -57,16 +57,20 @@ export class HiAgentSseParser {
 
     try {
       const data: ESObject = JSON.parse(payload) as ESObject;
-      const parsedEvent: string = HiAgentSseParser.readString(data, 'event');
+      const parsedEvent: string = HiAgentSseParser.readFirstString(data, ['event', 'type']);
       nextEvent.event = parsedEvent.length > 0 ? parsedEvent : nextEvent.event;
-      nextEvent.answer = HiAgentSseParser.readString(data, 'answer');
-      nextEvent.taskId = HiAgentSseParser.readString(data, 'task_id');
-      nextEvent.messageId = HiAgentSseParser.readString(data, 'id');
-      nextEvent.conversationId = HiAgentSseParser.readString(data, 'conversation_id');
-      nextEvent.createdAt = HiAgentSseParser.readNumber(data, 'created_at');
-      nextEvent.inputTokens = HiAgentSseParser.readNumber(data, 'input_tokens');
-      nextEvent.outputTokens = HiAgentSseParser.readNumber(data, 'output_tokens');
-      nextEvent.latency = HiAgentSseParser.readNumber(data, 'latency');
+      nextEvent.status = HiAgentSseParser.readFirstString(data, ['status']);
+      nextEvent.answer = HiAgentSseParser.readFirstString(data, ['answer', 'delta', 'text', 'content']);
+      nextEvent.thought = HiAgentSseParser.readFirstString(data, ['thought', 'thinking', 'reasoning']);
+      nextEvent.detailMessage = HiAgentSseParser.readFirstString(data, ['message', 'msg', 'detail']);
+      nextEvent.errorMessage = HiAgentSseParser.readFirstString(data, ['error', 'error_message', 'errmsg', 'reason']);
+      nextEvent.taskId = HiAgentSseParser.readFirstString(data, ['task_id', 'taskId']);
+      nextEvent.messageId = HiAgentSseParser.readFirstString(data, ['id', 'message_id', 'messageId']);
+      nextEvent.conversationId = HiAgentSseParser.readFirstString(data, ['conversation_id', 'conversationId']);
+      nextEvent.createdAt = HiAgentSseParser.readFirstNumber(data, ['created_at', 'createdAt']);
+      nextEvent.inputTokens = HiAgentSseParser.readFirstNumber(data, ['input_tokens', 'inputTokens']);
+      nextEvent.outputTokens = HiAgentSseParser.readFirstNumber(data, ['output_tokens', 'outputTokens']);
+      nextEvent.latency = HiAgentSseParser.readFirstNumber(data, ['latency']);
     } catch (_error) {
       if (nextEvent.event.length === 0) {
         nextEvent.event = 'text';
@@ -88,13 +92,23 @@ export class HiAgentSseParser {
     return nextPayload;
   }
 
-  private static readString(source: ESObject, key: string): string {
-    const value: Object = source[key];
-    return typeof value === 'string' ? value : '';
+  private static readFirstString(source: ESObject, keys: Array<string>): string {
+    for (let index: number = 0; index < keys.length; index++) {
+      const value: Object = source[keys[index]];
+      if (typeof value === 'string' && value.length > 0) {
+        return value;
+      }
+    }
+    return '';
   }
 
-  private static readNumber(source: ESObject, key: string): number {
-    const value: Object = source[key];
-    return typeof value === 'number' ? value : 0;
+  private static readFirstNumber(source: ESObject, keys: Array<string>): number {
+    for (let index: number = 0; index < keys.length; index++) {
+      const value: Object = source[keys[index]];
+      if (typeof value === 'number') {
+        return value;
+      }
+    }
+    return 0;
   }
 }

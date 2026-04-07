@@ -1,4 +1,11 @@
-import { InlineToken, InlineTokenStyle, MarkdownBlock, MarkdownBlockType } from '../models/MarkdownModels';
+import {
+  InlineToken,
+  InlineTokenStyle,
+  MarkdownBlock,
+  MarkdownBlockType,
+  MarkdownListItem,
+  MarkdownTableAlignment
+} from '../models/MarkdownModels';
 
 class BlockParseResult {
   block: MarkdownBlock;
@@ -10,73 +17,133 @@ class BlockParseResult {
   }
 }
 
-class DelimitedMatchResult {
+class FenceMatchResult {
   matched: boolean;
+  marker: string;
+  markerChar: string;
+  markerLength: number;
+  language: string;
+
+  constructor(matched: boolean, marker: string = '', markerChar: string = '', markerLength: number = 0,
+    language: string = '') {
+    this.matched = matched;
+    this.marker = marker;
+    this.markerChar = markerChar;
+    this.markerLength = markerLength;
+    this.language = language;
+  }
+}
+
+class ListMarkerMatch {
+  matched: boolean;
+  indent: number;
+  markerLength: number;
+  type: MarkdownBlockType;
   content: string;
+  checked: boolean;
+  orderNumber: number;
+
+  constructor(matched: boolean, indent: number = 0, markerLength: number = 0,
+    type: MarkdownBlockType = MarkdownBlockType.UnorderedList, content: string = '',
+    checked: boolean = false, orderNumber: number = 1) {
+    this.matched = matched;
+    this.indent = indent;
+    this.markerLength = markerLength;
+    this.type = type;
+    this.content = content;
+    this.checked = checked;
+    this.orderNumber = orderNumber;
+  }
+}
+
+class InlineMatchResult {
+  matched: boolean;
   nextIndex: number;
+  tokens: Array<InlineToken>;
+
+  constructor(matched: boolean, nextIndex: number = 0, tokens: Array<InlineToken> = []) {
+    this.matched = matched;
+    this.nextIndex = nextIndex;
+    this.tokens = tokens;
+  }
+}
+
+class StyledInlineMatchResult {
+  matched: boolean;
+  nextIndex: number;
+  content: string;
   style: number;
 
-  constructor(matched: boolean, content: string, nextIndex: number, style: number) {
+  constructor(matched: boolean, nextIndex: number = 0, content: string = '',
+    style: number = InlineTokenStyle.Plain) {
     this.matched = matched;
-    this.content = content;
     this.nextIndex = nextIndex;
+    this.content = content;
     this.style = style;
   }
 }
 
-class LinkMatchResult {
-  matched: boolean;
-  content: string;
-  href: string;
-  nextIndex: number;
-
-  constructor(matched: boolean, content: string, href: string, nextIndex: number) {
-    this.matched = matched;
-    this.content = content;
-    this.href = href;
-    this.nextIndex = nextIndex;
-  }
-}
-
 export class MarkdownParser {
+  private static readonly IMAGE_BASE_URL: string = 'https://hia.volcenginepaas.com';
   private static blockCounter: number = 0;
   private static tokenCounter: number = 0;
+  private static listItemCounter: number = 0;
 
   static parse(markdown: string): Array<MarkdownBlock> {
     MarkdownParser.blockCounter = 0;
     MarkdownParser.tokenCounter = 0;
+    MarkdownParser.listItemCounter = 0;
 
-    const blocks: Array<MarkdownBlock> = [];
-    const normalized: string = markdown.replace(/\r\n/g, '\n');
+    const normalized: string = MarkdownParser.normalizeMathMarkdown(markdown).replace(/\t/g, '    ');
     const lines: Array<string> = normalized.split('\n');
-    let index: number = 0;
+    return MarkdownParser.parseBlocks(lines, 0, lines.length);
+  }
 
-    while (index < lines.length) {
+  static parseInline(text: string): Array<InlineToken> {
+    return MarkdownParser.mergeAdjacentTokens(MarkdownParser.parseInlineSegment(text, InlineTokenStyle.Plain, ''));
+  }
+
+  static normalizeMathMarkdown(markdown: string): string {
+    return markdown.replace(/\r\n/g, '\n');
+  }
+
+  private static parseBlocks(lines: Array<string>, startIndex: number, endIndex: number): Array<MarkdownBlock> {
+    const blocks: Array<MarkdownBlock> = [];
+    let index: number = startIndex;
+
+    while (index < endIndex) {
       const line: string = lines[index];
       if (MarkdownParser.isBlank(line)) {
         index++;
         continue;
       }
 
-      const fenceMatch: RegExpMatchArray | null = line.match(/^```([\w-]+)?\s*$/);
-      if (fenceMatch !== null) {
-        let language: string = '';
-        if (fenceMatch[1] !== undefined) {
-          language = fenceMatch[1];
-        }
-        const codeBlockResult = MarkdownParser.consumeCodeBlock(lines, index, language);
+      const fenceMatch: FenceMatchResult = MarkdownParser.matchFence(line);
+      if (fenceMatch.matched) {
+        const codeBlockResult: BlockParseResult = MarkdownParser.consumeCodeBlock(lines, index, endIndex, fenceMatch);
         blocks.push(codeBlockResult.block);
         index = codeBlockResult.nextIndex;
         continue;
       }
 
-      const headingMatch: RegExpMatchArray | null = line.match(/^(#{1,6})\s+(.*)$/);
-      if (headingMatch !== null) {
-        const headingBlock: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Heading);
-        headingBlock.level = headingMatch[1].length;
-        headingBlock.tokens = MarkdownParser.parseInline(headingMatch[2]);
-        blocks.push(headingBlock);
+      const mathBlockResult: BlockParseResult | null = MarkdownParser.tryConsumeMathBlock(lines, index, endIndex);
+      if (mathBlockResult !== null) {
+        blocks.push(mathBlockResult.block);
+        index = mathBlockResult.nextIndex;
+        continue;
+      }
+
+      const atxHeadingBlock: MarkdownBlock | null = MarkdownParser.tryParseAtxHeading(line);
+      if (atxHeadingBlock !== null) {
+        blocks.push(atxHeadingBlock);
         index++;
+        continue;
+      }
+
+      const setextHeadingResult: BlockParseResult | null = MarkdownParser.tryConsumeSetextHeading(lines, index, endIndex);
+      if (setextHeadingResult !== null) {
+        blocks.push(setextHeadingResult.block);
+        index = setextHeadingResult.nextIndex;
         continue;
       }
 
@@ -86,49 +153,36 @@ export class MarkdownParser {
         continue;
       }
 
-      if (MarkdownParser.isImageLine(line)) {
-        const imageResult = MarkdownParser.consumeImage(line);
-        blocks.push(imageResult.block);
-        index = index + 1;
+      const imageBlock: MarkdownBlock | null = MarkdownParser.tryParseAnyImageBlock(line);
+      if (imageBlock !== null) {
+        blocks.push(imageBlock);
+        index++;
         continue;
       }
 
-      if (index + 1 < lines.length && MarkdownParser.isTableStart(lines[index], lines[index + 1])) {
-        const tableResult = MarkdownParser.consumeTable(lines, index);
+      if (index + 1 < endIndex && MarkdownParser.isTableStart(lines[index], lines[index + 1])) {
+        const tableResult: BlockParseResult = MarkdownParser.consumeTable(lines, index, endIndex);
         blocks.push(tableResult.block);
         index = tableResult.nextIndex;
         continue;
       }
 
       if (MarkdownParser.isQuoteLine(line)) {
-        const quoteResult = MarkdownParser.consumeQuote(lines, index);
+        const quoteResult: BlockParseResult = MarkdownParser.consumeQuote(lines, index, endIndex);
         blocks.push(quoteResult.block);
         index = quoteResult.nextIndex;
         continue;
       }
 
-      if (MarkdownParser.isTaskListLine(line)) {
-        const taskListResult = MarkdownParser.consumeTaskList(lines, index);
-        blocks.push(taskListResult.block);
-        index = taskListResult.nextIndex;
+      const listMarkerMatch: ListMarkerMatch = MarkdownParser.matchListMarker(line);
+      if (listMarkerMatch.matched) {
+        const listResult: BlockParseResult = MarkdownParser.consumeList(lines, index, endIndex);
+        blocks.push(listResult.block);
+        index = listResult.nextIndex;
         continue;
       }
 
-      if (MarkdownParser.isUnorderedListLine(line)) {
-        const unorderedListResult = MarkdownParser.consumeUnorderedList(lines, index);
-        blocks.push(unorderedListResult.block);
-        index = unorderedListResult.nextIndex;
-        continue;
-      }
-
-      if (MarkdownParser.isOrderedListLine(line)) {
-        const orderedListResult = MarkdownParser.consumeOrderedList(lines, index);
-        blocks.push(orderedListResult.block);
-        index = orderedListResult.nextIndex;
-        continue;
-      }
-
-      const paragraphResult = MarkdownParser.consumeParagraph(lines, index);
+      const paragraphResult: BlockParseResult = MarkdownParser.consumeParagraph(lines, index, endIndex);
       blocks.push(paragraphResult.block);
       index = paragraphResult.nextIndex;
     }
@@ -136,93 +190,424 @@ export class MarkdownParser {
     return blocks;
   }
 
-  static parseInline(text: string): Array<InlineToken> {
+  private static consumeCodeBlock(lines: Array<string>, startIndex: number, endIndex: number,
+    fenceMatch: FenceMatchResult): BlockParseResult {
+    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Code);
+    block.language = fenceMatch.language;
+
+    const codeLines: Array<string> = [];
+    let index: number = startIndex + 1;
+    while (index < endIndex) {
+      const currentLine: string = lines[index];
+      if (MarkdownParser.isFenceCloseLine(currentLine, fenceMatch.markerChar, fenceMatch.markerLength)) {
+        index++;
+        break;
+      }
+      codeLines.push(currentLine);
+      index++;
+    }
+
+    block.code = codeLines.join('\n');
+    return new BlockParseResult(block, index);
+  }
+
+  private static tryConsumeMathBlock(lines: Array<string>, startIndex: number, endIndex: number): BlockParseResult | null {
+    const currentLine: string = lines[startIndex];
+    const trimmedLine: string = MarkdownParser.trimLine(currentLine);
+    if (trimmedLine === '\\[') {
+      return MarkdownParser.consumeDelimitedMathBlock(lines, startIndex, endIndex, '\\]');
+    }
+    if (trimmedLine === '$$') {
+      return MarkdownParser.consumeDelimitedMathBlock(lines, startIndex, endIndex, '$$');
+    }
+
+    if (trimmedLine.startsWith('\\[') && trimmedLine.endsWith('\\]') && trimmedLine.length > 4) {
+      const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Math);
+      block.mathDisplay = true;
+      block.math = trimmedLine.substring(2, trimmedLine.length - 2).trim();
+      return new BlockParseResult(block, startIndex + 1);
+    }
+
+    if (trimmedLine.startsWith('$$') && trimmedLine.endsWith('$$') && trimmedLine.length > 4) {
+      const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Math);
+      block.mathDisplay = true;
+      block.math = trimmedLine.substring(2, trimmedLine.length - 2).trim();
+      return new BlockParseResult(block, startIndex + 1);
+    }
+
+    return null;
+  }
+
+  private static consumeDelimitedMathBlock(lines: Array<string>, startIndex: number, endIndex: number,
+    closingDelimiter: string): BlockParseResult {
+    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Math);
+    block.mathDisplay = true;
+
+    const mathLines: Array<string> = [];
+    let index: number = startIndex + 1;
+    while (index < endIndex) {
+      const currentLine: string = lines[index];
+      if (MarkdownParser.trimLine(currentLine) === closingDelimiter) {
+        index++;
+        break;
+      }
+      mathLines.push(currentLine);
+      index++;
+    }
+
+    block.math = mathLines.join('\n').trim();
+    return new BlockParseResult(block, index);
+  }
+
+  private static consumeQuote(lines: Array<string>, startIndex: number, endIndex: number): BlockParseResult {
+    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Quote);
+    const quoteLines: Array<string> = [];
+    let index: number = startIndex;
+
+    while (index < endIndex) {
+      const currentLine: string = lines[index];
+      if (MarkdownParser.isQuoteLine(currentLine)) {
+        quoteLines.push(currentLine.replace(/^\s{0,3}>\s?/, ''));
+        index++;
+        continue;
+      }
+      if (MarkdownParser.isBlank(currentLine)) {
+        quoteLines.push('');
+        index++;
+        continue;
+      }
+      break;
+    }
+
+    block.children = MarkdownParser.parseBlocks(quoteLines, 0, quoteLines.length);
+    for (let childIndex = 0; childIndex < block.children.length; childIndex++) {
+      if (block.children[childIndex].type === MarkdownBlockType.Paragraph) {
+        block.items.push(block.children[childIndex].tokens);
+      }
+    }
+    return new BlockParseResult(block, index);
+  }
+
+  private static consumeList(lines: Array<string>, startIndex: number, endIndex: number): BlockParseResult {
+    const firstMarker: ListMarkerMatch = MarkdownParser.matchListMarker(lines[startIndex]);
+    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), firstMarker.type);
+    if (firstMarker.type === MarkdownBlockType.OrderedList) {
+      block.startNumber = firstMarker.orderNumber;
+    }
+
+    let index: number = startIndex;
+    while (index < endIndex) {
+      const marker: ListMarkerMatch = MarkdownParser.matchListMarker(lines[index]);
+      if (!marker.matched || marker.indent !== firstMarker.indent || !MarkdownParser.isSameListFamily(marker, firstMarker)) {
+        break;
+      }
+
+      const item: MarkdownListItem = new MarkdownListItem(MarkdownParser.nextListItemId());
+      item.checked = marker.checked;
+      const itemLines: Array<string> = [];
+      itemLines.push(marker.content);
+      index++;
+
+      const contentIndent: number = marker.indent + marker.markerLength;
+      while (index < endIndex) {
+        const currentLine: string = lines[index];
+        if (MarkdownParser.isBlank(currentLine)) {
+          itemLines.push('');
+          index++;
+          continue;
+        }
+
+        const siblingMarker: ListMarkerMatch = MarkdownParser.matchListMarker(currentLine);
+        if (siblingMarker.matched && siblingMarker.indent === firstMarker.indent &&
+          MarkdownParser.isSameListFamily(siblingMarker, firstMarker)) {
+          break;
+        }
+
+        if (MarkdownParser.leadingSpaceCount(currentLine) < contentIndent) {
+          break;
+        }
+
+        itemLines.push(MarkdownParser.stripIndent(currentLine, contentIndent));
+        index++;
+      }
+
+      item.blocks = MarkdownParser.parseBlocks(itemLines, 0, itemLines.length);
+      if (item.blocks.length === 0 && marker.content.length > 0) {
+        const paragraphBlock: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Paragraph);
+        paragraphBlock.tokens = MarkdownParser.parseInline(marker.content);
+        item.blocks.push(paragraphBlock);
+      }
+
+      block.listItems.push(item);
+      block.taskStates.push(marker.checked);
+      block.items.push(MarkdownParser.extractListPreviewTokens(item, marker.content));
+    }
+
+    return new BlockParseResult(block, index);
+  }
+
+  private static extractListPreviewTokens(item: MarkdownListItem, fallbackContent: string): Array<InlineToken> {
+    if (item.blocks.length > 0 && item.blocks[0].type === MarkdownBlockType.Paragraph) {
+      return item.blocks[0].tokens;
+    }
+    return MarkdownParser.parseInline(fallbackContent);
+  }
+
+  private static consumeTable(lines: Array<string>, startIndex: number, endIndex: number): BlockParseResult {
+    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Table);
+    const headerCells: Array<string> = MarkdownParser.splitTableCells(lines[startIndex]);
+    const alignmentCells: Array<string> = MarkdownParser.splitTableCells(lines[startIndex + 1]);
+
+    for (let headerIndex = 0; headerIndex < headerCells.length; headerIndex++) {
+      block.headers.push(MarkdownParser.parseInline(headerCells[headerIndex]));
+    }
+    for (let alignmentIndex = 0; alignmentIndex < alignmentCells.length; alignmentIndex++) {
+      block.tableAlignments.push(MarkdownParser.parseTableAlignment(alignmentCells[alignmentIndex]));
+    }
+
+    let index: number = startIndex + 2;
+    while (index < endIndex && MarkdownParser.isTableRow(lines[index])) {
+      const cells: Array<string> = MarkdownParser.splitTableCells(lines[index]);
+      const row: Array<Array<InlineToken>> = [];
+      for (let cellIndex = 0; cellIndex < block.headers.length; cellIndex++) {
+        if (cellIndex < cells.length) {
+          row.push(MarkdownParser.parseInline(cells[cellIndex]));
+        } else {
+          row.push([]);
+        }
+      }
+      block.rows.push(row);
+      index++;
+    }
+
+    return new BlockParseResult(block, index);
+  }
+
+  private static consumeParagraph(lines: Array<string>, startIndex: number, endIndex: number): BlockParseResult {
+    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Paragraph);
+    const paragraphLines: Array<string> = [];
+    let index: number = startIndex;
+
+    while (index < endIndex) {
+      if (MarkdownParser.isBlank(lines[index])) {
+        break;
+      }
+      if (index > startIndex && MarkdownParser.startsBlock(lines, index, endIndex)) {
+        break;
+      }
+      paragraphLines.push(MarkdownParser.trimLine(lines[index]));
+      index++;
+    }
+
+    block.tokens = MarkdownParser.parseInline(paragraphLines.join(' '));
+    return new BlockParseResult(block, index);
+  }
+
+  private static tryParseAtxHeading(line: string): MarkdownBlock | null {
+    const match: RegExpMatchArray | null = line.match(/^\s{0,3}(#{1,6})\s*(.*?)\s*#*\s*$/);
+    if (match === null) {
+      return null;
+    }
+    if (match[2].length === 0 && match[1].length === 0) {
+      return null;
+    }
+
+    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Heading);
+    block.level = match[1].length;
+    block.tokens = MarkdownParser.parseInline(match[2]);
+    return block;
+  }
+
+  private static tryConsumeSetextHeading(lines: Array<string>, startIndex: number, endIndex: number): BlockParseResult | null {
+    if (startIndex + 1 >= endIndex) {
+      return null;
+    }
+    const currentLine: string = lines[startIndex];
+    if (MarkdownParser.isBlank(currentLine) || MarkdownParser.isBlockStarterLine(currentLine)) {
+      return null;
+    }
+
+    const underlineLine: string = lines[startIndex + 1];
+    const underlineMatch: RegExpMatchArray | null = underlineLine.match(/^\s{0,3}(=+|-+)\s*$/);
+    if (underlineMatch === null) {
+      return null;
+    }
+
+    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Heading);
+    block.level = underlineMatch[1].charAt(0) === '=' ? 1 : 2;
+    block.tokens = MarkdownParser.parseInline(MarkdownParser.trimLine(currentLine));
+    return new BlockParseResult(block, startIndex + 2);
+  }
+
+  private static tryParseAnyImageBlock(line: string): MarkdownBlock | null {
+    const markdownImageBlock: MarkdownBlock | null = MarkdownParser.tryParseImageBlock(line);
+    if (markdownImageBlock !== null) {
+      return markdownImageBlock;
+    }
+
+    const htmlImageBlock: MarkdownBlock | null = MarkdownParser.tryParseHtmlImageBlock(line);
+    if (htmlImageBlock !== null) {
+      return htmlImageBlock;
+    }
+
+    return MarkdownParser.tryParseBareImageBlock(line);
+  }
+
+  private static tryParseImageBlock(line: string): MarkdownBlock | null {
+    const match: RegExpMatchArray | null = line.match(/^\s*!\[(.*?)\]\((\S+?)(?:\s+["'](.*?)["'])?\)\s*$/);
+    if (match === null) {
+      return null;
+    }
+
+    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Image);
+    block.imageAlt = match[1];
+    block.imageUrl = MarkdownParser.normalizeImageUrl(match[2]);
+    if (match[3] !== undefined) {
+      block.imageTitle = match[3];
+    }
+    return block;
+  }
+
+  private static tryParseHtmlImageBlock(line: string): MarkdownBlock | null {
+    const trimmedLine: string = MarkdownParser.trimLine(line);
+    const imgTagMatch: RegExpMatchArray | null = trimmedLine.match(/^<img\b[^>]*>$/i);
+    if (imgTagMatch === null) {
+      return null;
+    }
+
+    const source: string = MarkdownParser.readHtmlImageAttribute(trimmedLine, 'src');
+    if (source.length === 0) {
+      return null;
+    }
+
+    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Image);
+    block.imageUrl = MarkdownParser.normalizeImageUrl(source);
+    block.imageAlt = MarkdownParser.readHtmlImageAttribute(trimmedLine, 'alt');
+    block.imageTitle = MarkdownParser.readHtmlImageAttribute(trimmedLine, 'title');
+    return block;
+  }
+
+  private static tryParseBareImageBlock(line: string): MarkdownBlock | null {
+    const trimmedLine: string = MarkdownParser.trimLine(line);
+    if (!MarkdownParser.looksLikeImageUrl(trimmedLine)) {
+      return null;
+    }
+
+    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Image);
+    block.imageUrl = MarkdownParser.normalizeImageUrl(trimmedLine);
+    return block;
+  }
+
+  private static normalizeImageUrl(imageUrl: string): string {
+    const trimmedUrl: string = MarkdownParser.trimLine(imageUrl);
+    if (trimmedUrl.length === 0) {
+      return '';
+    }
+    if (trimmedUrl.startsWith('http://') || trimmedUrl.startsWith('https://')) {
+      return trimmedUrl;
+    }
+    if (trimmedUrl.startsWith('/')) {
+      return `${MarkdownParser.IMAGE_BASE_URL}${trimmedUrl}`;
+    }
+    return `${MarkdownParser.IMAGE_BASE_URL}/${trimmedUrl}`;
+  }
+
+  private static readHtmlImageAttribute(html: string, attributeName: string): string {
+    const attributePattern: RegExp = new RegExp(`${attributeName}\\s*=\\s*["']([^"']+)["']`, 'i');
+    const match: RegExpMatchArray | null = html.match(attributePattern);
+    if (match === null || match[1] === undefined) {
+      return '';
+    }
+    return match[1];
+  }
+
+  private static looksLikeImageUrl(value: string): boolean {
+    if (value.length === 0 || value.includes(' ')) {
+      return false;
+    }
+
+    const normalizedValue: string = value.toLowerCase();
+    if (!(normalizedValue.startsWith('http://') || normalizedValue.startsWith('https://') ||
+      normalizedValue.startsWith('/') || normalizedValue.startsWith('./') || normalizedValue.startsWith('../'))) {
+      return false;
+    }
+
+    return normalizedValue.endsWith('.png') ||
+      normalizedValue.endsWith('.jpg') ||
+      normalizedValue.endsWith('.jpeg') ||
+      normalizedValue.endsWith('.gif') ||
+      normalizedValue.endsWith('.webp') ||
+      normalizedValue.endsWith('.bmp') ||
+      normalizedValue.endsWith('.svg');
+  }
+
+  private static parseInlineSegment(text: string, inheritedStyle: number, href: string): Array<InlineToken> {
     const tokens: Array<InlineToken> = [];
-    let cursor: number = 0;
     let buffer: string = '';
+    let cursor: number = 0;
 
     const flushBuffer = (): void => {
       if (buffer.length === 0) {
         return;
       }
-      tokens.push(MarkdownParser.createToken(buffer));
+      tokens.push(MarkdownParser.createToken(buffer, inheritedStyle, href));
       buffer = '';
     };
 
     while (cursor < text.length) {
-      const codeResult = MarkdownParser.matchDelimited(text, cursor, '`', InlineTokenStyle.Code);
-      if (codeResult.matched) {
+      const codeSpanMatch: InlineMatchResult = MarkdownParser.matchCodeSpan(text, cursor, inheritedStyle, href);
+      if (codeSpanMatch.matched) {
         flushBuffer();
-        tokens.push(MarkdownParser.createToken(codeResult.content, InlineTokenStyle.Code));
-        cursor = codeResult.nextIndex;
+        MarkdownParser.appendTokens(tokens, codeSpanMatch.tokens);
+        cursor = codeSpanMatch.nextIndex;
         continue;
       }
 
-      const linkResult = MarkdownParser.matchLink(text, cursor);
-      if (linkResult.matched) {
+      const mathMatch: InlineMatchResult = MarkdownParser.matchMathInline(text, cursor, inheritedStyle, href);
+      if (mathMatch.matched) {
         flushBuffer();
-        tokens.push(MarkdownParser.createToken(linkResult.content, InlineTokenStyle.Plain, linkResult.href));
-        cursor = linkResult.nextIndex;
+        MarkdownParser.appendTokens(tokens, mathMatch.tokens);
+        cursor = mathMatch.nextIndex;
         continue;
       }
 
-      const strikeResult = MarkdownParser.matchDelimited(text, cursor, '~~', InlineTokenStyle.Strike);
-      if (strikeResult.matched) {
-        flushBuffer();
-        tokens.push(MarkdownParser.createToken(strikeResult.content, InlineTokenStyle.Strike));
-        cursor = strikeResult.nextIndex;
+      if (text[cursor] === '\\' && cursor + 1 < text.length && MarkdownParser.isEscapable(text[cursor + 1])) {
+        buffer += text[cursor + 1];
+        cursor += 2;
         continue;
       }
 
-      const boldItalicAsteriskResult = MarkdownParser.matchDelimited(text, cursor, '***',
-        InlineTokenStyle.Bold | InlineTokenStyle.Italic);
-      if (boldItalicAsteriskResult.matched) {
+      const autoLinkMatch: InlineMatchResult = MarkdownParser.matchAutoLink(text, cursor, inheritedStyle);
+      if (autoLinkMatch.matched) {
         flushBuffer();
-        tokens.push(MarkdownParser.createToken(boldItalicAsteriskResult.content,
-          InlineTokenStyle.Bold | InlineTokenStyle.Italic));
-        cursor = boldItalicAsteriskResult.nextIndex;
+        MarkdownParser.appendTokens(tokens, autoLinkMatch.tokens);
+        cursor = autoLinkMatch.nextIndex;
         continue;
       }
 
-      const boldItalicUnderlineResult = MarkdownParser.matchDelimited(text, cursor, '___',
-        InlineTokenStyle.Bold | InlineTokenStyle.Italic);
-      if (boldItalicUnderlineResult.matched) {
+      const linkMatch: InlineMatchResult = MarkdownParser.matchLink(text, cursor, inheritedStyle);
+      if (linkMatch.matched) {
         flushBuffer();
-        tokens.push(MarkdownParser.createToken(boldItalicUnderlineResult.content,
-          InlineTokenStyle.Bold | InlineTokenStyle.Italic));
-        cursor = boldItalicUnderlineResult.nextIndex;
+        MarkdownParser.appendTokens(tokens, linkMatch.tokens);
+        cursor = linkMatch.nextIndex;
         continue;
       }
 
-      const boldAsteriskResult = MarkdownParser.matchDelimited(text, cursor, '**', InlineTokenStyle.Bold);
-      if (boldAsteriskResult.matched) {
+      const bareUrlMatch: InlineMatchResult = MarkdownParser.matchBareUrl(text, cursor, inheritedStyle);
+      if (bareUrlMatch.matched) {
         flushBuffer();
-        tokens.push(MarkdownParser.createToken(boldAsteriskResult.content, InlineTokenStyle.Bold));
-        cursor = boldAsteriskResult.nextIndex;
+        MarkdownParser.appendTokens(tokens, bareUrlMatch.tokens);
+        cursor = bareUrlMatch.nextIndex;
         continue;
       }
 
-      const boldUnderlineResult = MarkdownParser.matchDelimited(text, cursor, '__', InlineTokenStyle.Bold);
-      if (boldUnderlineResult.matched) {
+      const styledMatch: StyledInlineMatchResult = MarkdownParser.matchStyledInline(text, cursor);
+      if (styledMatch.matched) {
         flushBuffer();
-        tokens.push(MarkdownParser.createToken(boldUnderlineResult.content, InlineTokenStyle.Bold));
-        cursor = boldUnderlineResult.nextIndex;
-        continue;
-      }
-
-      const italicAsteriskResult = MarkdownParser.matchDelimited(text, cursor, '*', InlineTokenStyle.Italic);
-      if (italicAsteriskResult.matched) {
-        flushBuffer();
-        tokens.push(MarkdownParser.createToken(italicAsteriskResult.content, InlineTokenStyle.Italic));
-        cursor = italicAsteriskResult.nextIndex;
-        continue;
-      }
-
-      const italicUnderlineResult = MarkdownParser.matchDelimited(text, cursor, '_', InlineTokenStyle.Italic);
-      if (italicUnderlineResult.matched) {
-        flushBuffer();
-        tokens.push(MarkdownParser.createToken(italicUnderlineResult.content, InlineTokenStyle.Italic));
-        cursor = italicUnderlineResult.nextIndex;
+        const styledTokens: Array<InlineToken> = MarkdownParser.parseInlineSegment(styledMatch.content,
+          inheritedStyle | styledMatch.style, href);
+        MarkdownParser.appendTokens(tokens, styledTokens);
+        cursor = styledMatch.nextIndex;
         continue;
       }
 
@@ -231,209 +616,296 @@ export class MarkdownParser {
     }
 
     flushBuffer();
-    return tokens;
+    return MarkdownParser.mergeAdjacentTokens(tokens);
   }
 
-  private static consumeCodeBlock(lines: Array<string>, startIndex: number, language: string): BlockParseResult {
-    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Code);
-    block.language = language;
-
-    const codeLines: Array<string> = [];
-    let index: number = startIndex + 1;
-    while (index < lines.length && !lines[index].match(/^```\s*$/)) {
-      codeLines.push(lines[index]);
-      index++;
+  private static matchCodeSpan(text: string, cursor: number, inheritedStyle: number, href: string): InlineMatchResult {
+    let backtickCount: number = 0;
+    while (cursor + backtickCount < text.length && text[cursor + backtickCount] === '`') {
+      backtickCount++;
+    }
+    if (backtickCount === 0) {
+      return new InlineMatchResult(false);
     }
 
-    block.code = codeLines.join('\n');
-    if (index < lines.length) {
-      index++;
+    const delimiter: string = MarkdownParser.repeatChar('`', backtickCount);
+    const closeIndex: number = MarkdownParser.findUnescaped(text, delimiter, cursor + backtickCount);
+    if (closeIndex < 0) {
+      return new InlineMatchResult(false);
     }
 
-    return new BlockParseResult(block, index);
+    const rawContent: string = text.substring(cursor + backtickCount, closeIndex);
+    const normalizedContent: string = rawContent.replace(/^ /, '').replace(/ $/, '');
+    return new InlineMatchResult(true, closeIndex + backtickCount, [
+      MarkdownParser.createToken(normalizedContent, inheritedStyle | InlineTokenStyle.Code, href)
+    ]);
   }
 
-  private static consumeQuote(lines: Array<string>, startIndex: number): BlockParseResult {
-    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Quote);
-    let index: number = startIndex;
-
-    while (index < lines.length && MarkdownParser.isQuoteLine(lines[index])) {
-      const strippedLine: string = lines[index].replace(/^\s*>\s?/, '');
-      block.items.push(MarkdownParser.parseInline(strippedLine));
-      index++;
-    }
-
-    return new BlockParseResult(block, index);
-  }
-
-  private static consumeUnorderedList(lines: Array<string>, startIndex: number): BlockParseResult {
-    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.UnorderedList);
-    let index: number = startIndex;
-
-    while (index < lines.length) {
-      const match: RegExpMatchArray | null = lines[index].match(/^\s*[-*+]\s+(.*)$/);
-      if (match === null) {
-        break;
+  private static matchMathInline(text: string, cursor: number, inheritedStyle: number, href: string): InlineMatchResult {
+    if (MarkdownParser.hasPrefix(text, cursor, '\\(')) {
+      const closeIndex: number = text.indexOf('\\)', cursor + 2);
+      if (closeIndex > cursor + 2) {
+        const mathContent: string = text.substring(cursor + 2, closeIndex).trim();
+        return new InlineMatchResult(true, closeIndex + 2, [
+          MarkdownParser.createToken(mathContent, inheritedStyle | InlineTokenStyle.Math, href)
+        ]);
       }
-      block.items.push(MarkdownParser.parseInline(match[1]));
-      index++;
     }
 
-    return new BlockParseResult(block, index);
-  }
-
-  private static consumeTaskList(lines: Array<string>, startIndex: number): BlockParseResult {
-    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.TaskList);
-    let index: number = startIndex;
-
-    while (index < lines.length) {
-      const match: RegExpMatchArray | null = lines[index].match(/^\s*[-*+]\s+\[(x|X| )\]\s+(.*)$/);
-      if (match === null) {
-        break;
+    if (text[cursor] === '$' && (cursor === 0 || text[cursor - 1] !== '\\')) {
+      if (cursor + 1 < text.length && text[cursor + 1] === '$') {
+        return new InlineMatchResult(false);
       }
-      block.taskStates.push(match[1].toLowerCase() === 'x');
-      block.items.push(MarkdownParser.parseInline(match[2]));
-      index++;
-    }
 
-    return new BlockParseResult(block, index);
-  }
-
-  private static consumeOrderedList(lines: Array<string>, startIndex: number): BlockParseResult {
-    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.OrderedList);
-    let index: number = startIndex;
-
-    const firstLineMatch: RegExpMatchArray | null = lines[startIndex].match(/^\s*(\d+)\.\s+(.*)$/);
-    if (firstLineMatch !== null) {
-      block.startNumber = Number(firstLineMatch[1]);
-    }
-
-    while (index < lines.length) {
-      const match: RegExpMatchArray | null = lines[index].match(/^\s*(\d+)\.\s+(.*)$/);
-      if (match === null) {
-        break;
+      let closeIndex: number = cursor + 1;
+      while (closeIndex < text.length) {
+        if (text[closeIndex] === '$' && text[closeIndex - 1] !== '\\') {
+          const mathContent: string = text.substring(cursor + 1, closeIndex).trim();
+          if (mathContent.length > 0) {
+            return new InlineMatchResult(true, closeIndex + 1, [
+              MarkdownParser.createToken(mathContent, inheritedStyle | InlineTokenStyle.Math, href)
+            ]);
+          }
+          break;
+        }
+        closeIndex++;
       }
-      block.items.push(MarkdownParser.parseInline(match[2]));
-      index++;
     }
 
-    return new BlockParseResult(block, index);
+    return new InlineMatchResult(false);
   }
 
-  private static consumeParagraph(lines: Array<string>, startIndex: number): BlockParseResult {
-    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Paragraph);
-    const paragraphLines: Array<string> = [];
-    let index: number = startIndex;
+  private static matchAutoLink(text: string, cursor: number, inheritedStyle: number): InlineMatchResult {
+    if (text[cursor] !== '<') {
+      return new InlineMatchResult(false);
+    }
+    const closeIndex: number = text.indexOf('>', cursor + 1);
+    if (closeIndex < 0) {
+      return new InlineMatchResult(false);
+    }
 
-    while (index < lines.length) {
-      if (MarkdownParser.isBlank(lines[index])) {
-        break;
+    const value: string = text.substring(cursor + 1, closeIndex);
+    if (!MarkdownParser.isUrl(value)) {
+      return new InlineMatchResult(false);
+    }
+
+    return new InlineMatchResult(true, closeIndex + 1, [
+      MarkdownParser.createToken(value, inheritedStyle, value)
+    ]);
+  }
+
+  private static matchLink(text: string, cursor: number, inheritedStyle: number): InlineMatchResult {
+    let isImageSyntax: boolean = false;
+    if (text[cursor] === '!') {
+      if (cursor + 1 >= text.length || text[cursor + 1] !== '[') {
+        return new InlineMatchResult(false);
       }
-      if (index !== startIndex && MarkdownParser.isBlockStart(lines, index)) {
-        break;
+      isImageSyntax = true;
+      cursor++;
+    }
+
+    if (text[cursor] !== '[') {
+      return new InlineMatchResult(false);
+    }
+
+    const labelCloseIndex: number = MarkdownParser.findMatchingBracket(text, cursor);
+    if (labelCloseIndex < 0 || labelCloseIndex + 1 >= text.length || text[labelCloseIndex + 1] !== '(') {
+      return new InlineMatchResult(false);
+    }
+
+    const destinationCloseIndex: number = MarkdownParser.findMatchingParen(text, labelCloseIndex + 1);
+    if (destinationCloseIndex < 0) {
+      return new InlineMatchResult(false);
+    }
+
+    const label: string = text.substring(cursor + 1, labelCloseIndex);
+    const destinationRaw: string = text.substring(labelCloseIndex + 2, destinationCloseIndex);
+    const destination: string = MarkdownParser.extractLinkDestination(destinationRaw);
+    if (destination.length === 0) {
+      return new InlineMatchResult(false);
+    }
+
+    const labelTokens: Array<InlineToken> = MarkdownParser.parseInlineSegment(label, inheritedStyle, destination);
+    if (labelTokens.length === 0) {
+      const fallbackLabel: string = isImageSyntax && label.length === 0 ? destination : label;
+      labelTokens.push(MarkdownParser.createToken(fallbackLabel, inheritedStyle, destination));
+    }
+
+    return new InlineMatchResult(true, destinationCloseIndex + 1, labelTokens);
+  }
+
+  private static matchBareUrl(text: string, cursor: number, inheritedStyle: number): InlineMatchResult {
+    if (!(text.startsWith('http://', cursor) || text.startsWith('https://', cursor))) {
+      return new InlineMatchResult(false);
+    }
+
+    let endIndex: number = cursor;
+    while (endIndex < text.length && !MarkdownParser.isWhitespace(text[endIndex]) &&
+      text[endIndex] !== '<' && text[endIndex] !== '>') {
+      endIndex++;
+    }
+
+    const rawValue: string = text.substring(cursor, endIndex);
+    const normalizedValue: string = MarkdownParser.trimTrailingUrlPunctuation(rawValue);
+    if (normalizedValue.length === 0) {
+      return new InlineMatchResult(false);
+    }
+
+    const nextIndex: number = cursor + normalizedValue.length;
+    return new InlineMatchResult(true, nextIndex, [
+      MarkdownParser.createToken(normalizedValue, inheritedStyle, normalizedValue)
+    ]);
+  }
+
+  private static matchStyledInline(text: string, cursor: number): StyledInlineMatchResult {
+    const delimiters: Array<string> = ['***', '___', '~~', '**', '__', '*', '_'];
+    const styles: Array<number> = [
+      InlineTokenStyle.Bold | InlineTokenStyle.Italic,
+      InlineTokenStyle.Bold | InlineTokenStyle.Italic,
+      InlineTokenStyle.Strike,
+      InlineTokenStyle.Bold,
+      InlineTokenStyle.Bold,
+      InlineTokenStyle.Italic,
+      InlineTokenStyle.Italic
+    ];
+
+    for (let delimiterIndex = 0; delimiterIndex < delimiters.length; delimiterIndex++) {
+      const delimiter: string = delimiters[delimiterIndex];
+      if (!MarkdownParser.hasPrefix(text, cursor, delimiter)) {
+        continue;
       }
-      paragraphLines.push(lines[index]);
-      index++;
-    }
 
-    block.tokens = MarkdownParser.parseInline(paragraphLines.join('\n'));
-    return new BlockParseResult(block, index);
-  }
-
-  private static consumeTable(lines: Array<string>, startIndex: number): BlockParseResult {
-    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Table);
-    const headers: Array<string> = MarkdownParser.splitTableRow(lines[startIndex]);
-    block.headers = MarkdownParser.toTokenMatrix(headers);
-
-    let index: number = startIndex + 2;
-    while (index < lines.length && !MarkdownParser.isBlank(lines[index]) && lines[index].includes('|')) {
-      const rowCells: Array<string> = MarkdownParser.splitTableRow(lines[index]);
-      while (rowCells.length < headers.length) {
-        rowCells.push('');
+      const closeIndex: number = MarkdownParser.findUnescaped(text, delimiter, cursor + delimiter.length);
+      if (closeIndex <= cursor + delimiter.length) {
+        continue;
       }
-      block.rows.push(MarkdownParser.toTokenMatrix(rowCells));
-      index++;
+
+      const content: string = text.substring(cursor + delimiter.length, closeIndex);
+      return new StyledInlineMatchResult(true, closeIndex + delimiter.length, content, styles[delimiterIndex]);
     }
 
-    return new BlockParseResult(block, index);
+    return new StyledInlineMatchResult(false);
   }
 
-  private static consumeImage(line: string): BlockParseResult {
-    const block: MarkdownBlock = new MarkdownBlock(MarkdownParser.nextBlockId(), MarkdownBlockType.Image);
-    const match: RegExpMatchArray | null = line.match(/^\s*!\[(.*)\]\((.+)\)\s*$/);
-    if (match !== null) {
-      block.imageAlt = match[1];
-      block.imageUrl = match[2];
-    }
-    return new BlockParseResult(block, 0);
-  }
-
-  private static isBlockStart(lines: Array<string>, index: number): boolean {
+  private static startsBlock(lines: Array<string>, index: number, endIndex: number): boolean {
     const line: string = lines[index];
-    if (line.match(/^```([\w-]+)?\s*$/) !== null) {
+    if (MarkdownParser.isBlank(line)) {
       return true;
     }
-    if (line.match(/^(#{1,6})\s+(.*)$/) !== null) {
+    if (MarkdownParser.isBlockStarterLine(line)) {
       return true;
     }
-    if (MarkdownParser.isDividerLine(line) || MarkdownParser.isQuoteLine(line) ||
-      MarkdownParser.isTaskListLine(line) || MarkdownParser.isUnorderedListLine(line) ||
-      MarkdownParser.isOrderedListLine(line) || MarkdownParser.isImageLine(line)) {
-      return true;
-    }
-    if (index + 1 < lines.length && MarkdownParser.isTableStart(lines[index], lines[index + 1])) {
+    if (index + 1 < endIndex && MarkdownParser.isTableStart(line, lines[index + 1])) {
       return true;
     }
     return false;
   }
 
-  private static isBlank(line: string): boolean {
-    return line.trim().length === 0;
+  private static isBlockStarterLine(line: string): boolean {
+    return MarkdownParser.matchFence(line).matched ||
+      MarkdownParser.isMathBlockStarterLine(line) ||
+      MarkdownParser.isAtxHeadingLine(line) ||
+      MarkdownParser.isDividerLine(line) ||
+      MarkdownParser.isImageLine(line) ||
+      MarkdownParser.isQuoteLine(line) ||
+      MarkdownParser.matchListMarker(line).matched;
+  }
+
+  private static matchFence(line: string): FenceMatchResult {
+    const match: RegExpMatchArray | null = line.match(/^\s{0,3}(`{3,}|~{3,})(.*)$/);
+    if (match === null) {
+      return new FenceMatchResult(false);
+    }
+
+    const marker: string = match[1];
+    const language: string = MarkdownParser.trimLine(match[2]).split(/\s+/)[0];
+    return new FenceMatchResult(true, marker, marker.charAt(0), marker.length, language);
+  }
+
+  private static isMathBlockStarterLine(line: string): boolean {
+    const trimmedLine: string = MarkdownParser.trimLine(line);
+    return trimmedLine === '\\[' ||
+      trimmedLine === '$$' ||
+      (trimmedLine.startsWith('\\[') && trimmedLine.endsWith('\\]') && trimmedLine.length > 4) ||
+      (trimmedLine.startsWith('$$') && trimmedLine.endsWith('$$') && trimmedLine.length > 4);
+  }
+
+  private static isFenceCloseLine(line: string, markerChar: string, markerLength: number): boolean {
+    const closePattern: RegExp = new RegExp(`^\\s{0,3}${markerChar}{${markerLength},}\\s*$`);
+    return closePattern.test(line);
   }
 
   private static isDividerLine(line: string): boolean {
-    return line.match(/^\s*([-*_])(?:\s*\1){2,}\s*$/) !== null;
+    return /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line);
   }
 
-  private static isQuoteLine(line: string): boolean {
-    return line.match(/^\s*>\s?.*$/) !== null;
-  }
-
-  private static isUnorderedListLine(line: string): boolean {
-    return line.match(/^\s*[-*+]\s+.+$/) !== null;
-  }
-
-  private static isTaskListLine(line: string): boolean {
-    return line.match(/^\s*[-*+]\s+\[(x|X| )\]\s+.+$/) !== null;
-  }
-
-  private static isOrderedListLine(line: string): boolean {
-    return line.match(/^\s*\d+\.\s+.+$/) !== null;
+  private static isAtxHeadingLine(line: string): boolean {
+    return /^\s{0,3}(#{1,6})\s*(.*?)\s*#*\s*$/.test(line);
   }
 
   private static isImageLine(line: string): boolean {
-    return line.match(/^\s*!\[(.*)\]\((.+)\)\s*$/) !== null;
+    const trimmedLine: string = MarkdownParser.trimLine(line);
+    return /^\s*!\[(.*?)\]\((\S+?)(?:\s+["'](.*?)["'])?\)\s*$/.test(line) ||
+      /^<img\b[^>]*>$/i.test(trimmedLine) ||
+      MarkdownParser.looksLikeImageUrl(trimmedLine);
+  }
+
+  private static isQuoteLine(line: string): boolean {
+    return /^\s{0,3}>\s?.*$/.test(line);
+  }
+
+  private static matchListMarker(line: string): ListMarkerMatch {
+    const taskMatch: RegExpMatchArray | null = line.match(/^(\s{0,8})[-*+]\s+\[(x|X| )\]\s*(.*)$/);
+    if (taskMatch !== null) {
+      return new ListMarkerMatch(true, taskMatch[1].length, 6,
+        MarkdownBlockType.TaskList, taskMatch[3], taskMatch[2].toLowerCase() === 'x');
+    }
+
+    const unorderedMatch: RegExpMatchArray | null = line.match(/^(\s{0,8})[-*+]\s*(.*)$/);
+    if (unorderedMatch !== null) {
+      return new ListMarkerMatch(true, unorderedMatch[1].length, 2,
+        MarkdownBlockType.UnorderedList, unorderedMatch[2]);
+    }
+
+    const orderedMatch: RegExpMatchArray | null = line.match(/^(\s{0,8})(\d+)[.)]\s*(.*)$/);
+    if (orderedMatch !== null) {
+      const markerLength: number = orderedMatch[2].length + 2;
+      return new ListMarkerMatch(true, orderedMatch[1].length, markerLength,
+        MarkdownBlockType.OrderedList, orderedMatch[3], false, Number(orderedMatch[2]));
+    }
+
+    return new ListMarkerMatch(false);
+  }
+
+  private static isSameListFamily(left: ListMarkerMatch, right: ListMarkerMatch): boolean {
+    return left.type === right.type;
   }
 
   private static isTableStart(headerLine: string, separatorLine: string): boolean {
-    if (!headerLine.includes('|') || !separatorLine.includes('|')) {
-      return false;
-    }
-    const separatorCells: Array<string> = MarkdownParser.splitTableRow(separatorLine);
-    if (separatorCells.length === 0) {
+    if (!headerLine.includes('|')) {
       return false;
     }
 
-    for (let index: number = 0; index < separatorCells.length; index++) {
-      if (separatorCells[index].match(/^:?-{3,}:?$/) === null) {
+    const headerCells: Array<string> = MarkdownParser.splitTableCells(headerLine);
+    const separatorCells: Array<string> = MarkdownParser.splitTableCells(separatorLine);
+    if (headerCells.length < 2 || headerCells.length !== separatorCells.length) {
+      return false;
+    }
+
+    for (let index = 0; index < separatorCells.length; index++) {
+      if (!/^:?-{3,}:?$/.test(MarkdownParser.trimLine(separatorCells[index]))) {
         return false;
       }
     }
     return true;
   }
 
-  private static splitTableRow(line: string): Array<string> {
-    let normalizedLine: string = line.trim();
+  private static isTableRow(line: string): boolean {
+    return !MarkdownParser.isBlank(line) && line.includes('|');
+  }
+
+  private static splitTableCells(line: string): Array<string> {
+    let normalizedLine: string = MarkdownParser.trimLine(line);
     if (normalizedLine.startsWith('|')) {
       normalizedLine = normalizedLine.substring(1);
     }
@@ -441,69 +913,200 @@ export class MarkdownParser {
       normalizedLine = normalizedLine.substring(0, normalizedLine.length - 1);
     }
 
-    const parts: Array<string> = normalizedLine.split('|');
     const cells: Array<string> = [];
-    for (let index: number = 0; index < parts.length; index++) {
-      cells.push(parts[index].trim());
+    let currentCell: string = '';
+    let cursor: number = 0;
+    while (cursor < normalizedLine.length) {
+      if (normalizedLine[cursor] === '|' && (cursor === 0 || normalizedLine[cursor - 1] !== '\\')) {
+        cells.push(MarkdownParser.trimLine(currentCell));
+        currentCell = '';
+        cursor++;
+        continue;
+      }
+      currentCell += normalizedLine[cursor];
+      cursor++;
     }
+    cells.push(MarkdownParser.trimLine(currentCell));
     return cells;
   }
 
-  private static toTokenMatrix(texts: Array<string>): Array<Array<InlineToken>> {
-    const matrix: Array<Array<InlineToken>> = [];
-    for (let index: number = 0; index < texts.length; index++) {
-      matrix.push(MarkdownParser.parseInline(texts[index]));
+  private static parseTableAlignment(cell: string): MarkdownTableAlignment {
+    const normalized: string = MarkdownParser.trimLine(cell);
+    const startsWithColon: boolean = normalized.startsWith(':');
+    const endsWithColon: boolean = normalized.endsWith(':');
+    if (startsWithColon && endsWithColon) {
+      return MarkdownTableAlignment.Center;
     }
-    return matrix;
+    if (startsWithColon) {
+      return MarkdownTableAlignment.Left;
+    }
+    if (endsWithColon) {
+      return MarkdownTableAlignment.Right;
+    }
+    return MarkdownTableAlignment.None;
   }
 
-  private static matchDelimited(
-    text: string,
-    startIndex: number,
-    delimiter: string,
-    style: number
-  ): DelimitedMatchResult {
-    if (!text.startsWith(delimiter, startIndex)) {
-      return new DelimitedMatchResult(false, '', startIndex, style);
+  private static findMatchingBracket(text: string, openIndex: number): number {
+    let depth: number = 0;
+    let cursor: number = openIndex;
+    while (cursor < text.length) {
+      if (text[cursor] === '\\') {
+        cursor += 2;
+        continue;
+      }
+      if (text[cursor] === '[') {
+        depth++;
+      } else if (text[cursor] === ']') {
+        depth--;
+        if (depth === 0) {
+          return cursor;
+        }
+      }
+      cursor++;
     }
-
-    const contentStart: number = startIndex + delimiter.length;
-    const closingIndex: number = text.indexOf(delimiter, contentStart);
-    if (closingIndex <= contentStart) {
-      return new DelimitedMatchResult(false, '', startIndex, style);
-    }
-
-    return new DelimitedMatchResult(true, text.substring(contentStart, closingIndex), closingIndex + delimiter.length, style);
+    return -1;
   }
 
-  private static matchLink(
-    text: string,
-    startIndex: number
-  ): LinkMatchResult {
-    if (!text.startsWith('[', startIndex)) {
-      return new LinkMatchResult(false, '', '', startIndex);
+  private static findMatchingParen(text: string, openIndex: number): number {
+    if (openIndex >= text.length || text[openIndex] !== '(') {
+      return -1;
     }
 
-    const closeBracketIndex: number = text.indexOf(']', startIndex + 1);
-    if (closeBracketIndex < 0 || closeBracketIndex + 1 >= text.length || text[closeBracketIndex + 1] !== '(') {
-      return new LinkMatchResult(false, '', '', startIndex);
+    let depth: number = 0;
+    let cursor: number = openIndex;
+    while (cursor < text.length) {
+      if (text[cursor] === '\\') {
+        cursor += 2;
+        continue;
+      }
+      if (text[cursor] === '(') {
+        depth++;
+      } else if (text[cursor] === ')') {
+        depth--;
+        if (depth === 0) {
+          return cursor;
+        }
+      }
+      cursor++;
+    }
+    return -1;
+  }
+
+  private static extractLinkDestination(rawValue: string): string {
+    const trimmed: string = MarkdownParser.trimLine(rawValue);
+    if (trimmed.length === 0) {
+      return '';
     }
 
-    const closeParenIndex: number = text.indexOf(')', closeBracketIndex + 2);
-    if (closeParenIndex < 0) {
-      return new LinkMatchResult(false, '', '', startIndex);
+    if (trimmed.startsWith('<')) {
+      const closeIndex: number = trimmed.indexOf('>');
+      if (closeIndex > 0) {
+        return trimmed.substring(1, closeIndex);
+      }
     }
 
-    return new LinkMatchResult(
-      true,
-      text.substring(startIndex + 1, closeBracketIndex),
-      text.substring(closeBracketIndex + 2, closeParenIndex),
-      closeParenIndex + 1
-    );
+    let whitespaceIndex: number = -1;
+    for (let index = 0; index < trimmed.length; index++) {
+      if (MarkdownParser.isWhitespace(trimmed[index])) {
+        whitespaceIndex = index;
+        break;
+      }
+    }
+
+    if (whitespaceIndex < 0) {
+      return trimmed;
+    }
+    return trimmed.substring(0, whitespaceIndex);
+  }
+
+  private static trimTrailingUrlPunctuation(value: string): string {
+    let result: string = value;
+    while (result.length > 0) {
+      const lastChar: string = result.charAt(result.length - 1);
+      if (lastChar === '.' || lastChar === ',' || lastChar === '!' || lastChar === '?' ||
+        lastChar === ';' || lastChar === ':') {
+        result = result.substring(0, result.length - 1);
+        continue;
+      }
+      if (lastChar === ')' && MarkdownParser.countChar(result, '(') < MarkdownParser.countChar(result, ')')) {
+        result = result.substring(0, result.length - 1);
+        continue;
+      }
+      if (lastChar === ']') {
+        result = result.substring(0, result.length - 1);
+        continue;
+      }
+      break;
+    }
+    return result;
+  }
+
+  private static countChar(text: string, target: string): number {
+    let count: number = 0;
+    for (let index = 0; index < text.length; index++) {
+      if (text[index] === target) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  private static findUnescaped(text: string, searchValue: string, fromIndex: number): number {
+    let index: number = text.indexOf(searchValue, fromIndex);
+    while (index >= 0) {
+      if (!MarkdownParser.isEscaped(text, index)) {
+        return index;
+      }
+      index = text.indexOf(searchValue, index + searchValue.length);
+    }
+    return -1;
+  }
+
+  private static isEscaped(text: string, index: number): boolean {
+    let backslashCount: number = 0;
+    let cursor: number = index - 1;
+    while (cursor >= 0 && text[cursor] === '\\') {
+      backslashCount++;
+      cursor--;
+    }
+    return backslashCount % 2 === 1;
+  }
+
+  private static hasPrefix(text: string, index: number, prefix: string): boolean {
+    if (index + prefix.length > text.length) {
+      return false;
+    }
+    return text.substring(index, index + prefix.length) === prefix;
+  }
+
+  private static appendTokens(target: Array<InlineToken>, source: Array<InlineToken>): void {
+    for (let index = 0; index < source.length; index++) {
+      target.push(source[index]);
+    }
+  }
+
+  private static mergeAdjacentTokens(tokens: Array<InlineToken>): Array<InlineToken> {
+    const merged: Array<InlineToken> = [];
+    for (let index = 0; index < tokens.length; index++) {
+      const current: InlineToken = tokens[index];
+      if (merged.length === 0) {
+        merged.push(current);
+        continue;
+      }
+
+      const previous: InlineToken = merged[merged.length - 1];
+      if (previous.style === current.style && previous.href === current.href) {
+        previous.text += current.text;
+        continue;
+      }
+      merged.push(current);
+    }
+    return merged;
   }
 
   private static createToken(text: string, style: number = InlineTokenStyle.Plain, href: string = ''): InlineToken {
-    return new InlineToken(MarkdownParser.nextTokenId(), text, style, href);
+    MarkdownParser.tokenCounter++;
+    return new InlineToken(`token-${MarkdownParser.tokenCounter}`, text, style, href);
   }
 
   private static nextBlockId(): string {
@@ -511,8 +1114,54 @@ export class MarkdownParser {
     return `block-${MarkdownParser.blockCounter}`;
   }
 
-  private static nextTokenId(): string {
-    MarkdownParser.tokenCounter++;
-    return `token-${MarkdownParser.tokenCounter}`;
+  private static nextListItemId(): string {
+    MarkdownParser.listItemCounter++;
+    return `list-item-${MarkdownParser.listItemCounter}`;
+  }
+
+  private static repeatChar(value: string, count: number): string {
+    let result: string = '';
+    for (let index = 0; index < count; index++) {
+      result += value;
+    }
+    return result;
+  }
+
+  private static stripIndent(line: string, indent: number): string {
+    let cursor: number = 0;
+    let remainingIndent: number = indent;
+    while (cursor < line.length && remainingIndent > 0 && line[cursor] === ' ') {
+      cursor++;
+      remainingIndent--;
+    }
+    return line.substring(cursor);
+  }
+
+  private static leadingSpaceCount(line: string): number {
+    let count: number = 0;
+    while (count < line.length && line[count] === ' ') {
+      count++;
+    }
+    return count;
+  }
+
+  private static trimLine(line: string): string {
+    return line.replace(/^\s+/, '').replace(/\s+$/, '');
+  }
+
+  private static isBlank(line: string): boolean {
+    return MarkdownParser.trimLine(line).length === 0;
+  }
+
+  private static isUrl(value: string): boolean {
+    return /^https?:\/\/[^\s]+$/i.test(value);
+  }
+
+  private static isWhitespace(value: string): boolean {
+    return value === ' ' || value === '\n' || value === '\r' || value === '\t';
+  }
+
+  private static isEscapable(value: string): boolean {
+    return '\\`*_{}[]()#+-.!|~>'.includes(value);
   }
 }

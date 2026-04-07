@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']],
+        processEscapes: true
+      },
+      svg: {
+        fontCache: 'none'
+      },
+      startup: {
+        typeset: false
+      },
+      options: {
+        skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+      }
+    };
+  </script>
+  <script src="./tex-svg-full.js"></script>
+  <script src="./output/svg/fonts/tex.js"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      overflow-x: hidden;
+    }
+
+    body {
+      font-size: 15px;
+      line-height: 1.6;
+      word-break: break-word;
+      font-family: "HarmonyOS Sans", sans-serif;
+    }
+
+    #root {
+      min-height: 1px;
+    }
+
+    p, ul, ol, pre, blockquote, table, figure, .math-block {
+      margin: 0 0 12px 0;
+    }
+
+    p:last-child, ul:last-child, ol:last-child, pre:last-child, blockquote:last-child,
+    table:last-child, figure:last-child, .math-block:last-child {
+      margin-bottom: 0;
+    }
+
+    h1,h2,h3,h4,h5,h6 {
+      margin: 0 0 12px 0;
+      line-height: 1.35;
+    }
+
+    h1 { font-size: 24px; }
+    h2 { font-size: 21px; }
+    h3 { font-size: 18px; }
+    h4,h5,h6 { font-size: 16px; }
+
+    code {
+      font-family: monospace;
+      padding: 2px 4px;
+      border-radius: 6px;
+      background: #E2E8F0;
+      color: #0F172A;
+    }
+
+    pre {
+      padding: 14px;
+      border-radius: 18px;
+      overflow-x: auto;
+      background: #111827;
+      color: #E2E8F0;
+      box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.12);
+    }
+
+    pre code {
+      padding: 0;
+      border-radius: 0;
+      background: transparent;
+      color: inherit;
+      display: block;
+      white-space: pre;
+    }
+
+    blockquote {
+      padding: 12px;
+      border-left: 4px solid #2563EB;
+      border-radius: 16px;
+      background: #F8FAFC;
+    }
+
+    ul, ol {
+      padding-left: 22px;
+    }
+
+    li {
+      margin: 4px 0;
+    }
+
+    li > p {
+      margin: 0;
+    }
+
+    ul.task-list {
+      list-style: none;
+      padding-left: 0;
+    }
+
+    .task-list-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin: 8px 0;
+    }
+
+    .task-checkbox {
+      width: 18px;
+      height: 18px;
+      margin-top: 2px;
+      flex: 0 0 18px;
+      border-radius: 6px;
+      border: 1.2px solid #2563EB;
+      color: #2563EB;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+      box-sizing: border-box;
+      background: transparent;
+    }
+
+    .task-checkbox.is-checked {
+      background: #2563EB;
+      color: #FFFFFF;
+    }
+
+    .task-list-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .task-list-content > :last-child {
+      margin-bottom: 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      overflow: hidden;
+      border-radius: 16px;
+    }
+
+    th, td {
+      padding: 12px;
+    }
+
+    thead tr {
+      background: #E2E8F0;
+    }
+
+    tbody tr:nth-child(odd) {
+      background: #FFFFFF;
+    }
+
+    tbody tr:nth-child(even) {
+      background: #F8FAFC;
+    }
+
+    figure img {
+      width: 100%;
+      border-radius: 16px;
+      display: block;
+    }
+
+    .image-caption {
+      margin-top: 8px;
+      font-size: 13px;
+      color: #64748B;
+    }
+
+    .math-inline {
+      color: #1D4ED8;
+    }
+
+    .math-inline mjx-container {
+      display: inline-block !important;
+      margin: 0 2px !important;
+      vertical-align: middle;
+      max-width: 100%;
+    }
+
+    .math-block {
+      padding: 14px 16px;
+      border-radius: 18px;
+      border: 1px solid #DBEAFE;
+      background: #F8FAFF;
+      text-align: center;
+      overflow-x: auto;
+    }
+
+    .math-block mjx-container {
+      display: block !important;
+      margin: 0 auto !important;
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid #D6DEE8;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    window.__mathShellReady = true;
+
+    window.renderMathContent = function (html, options) {
+      var root = document.getElementById('root');
+      if (!root) {
+        return Promise.resolve('no-root');
+      }
+
+      var nextOptions = options || {};
+      document.body.style.color = nextOptions.textColor || '#1E293B';
+      document.body.style.background = 'transparent';
+
+      root.innerHTML = html || '';
+
+      if (!window.MathJax || !window.MathJax.typesetPromise) {
+        return Promise.resolve('no-mathjax');
+      }
+
+      var startupPromise = window.MathJax.startup && window.MathJax.startup.promise
+        ? window.MathJax.startup.promise
+        : Promise.resolve();
+
+      return startupPromise.then(function () {
+        return window.MathJax.typesetPromise([root]).then(function () {
+          var mjxCount = document.querySelectorAll('mjx-container, svg[data-mml-node]').length;
+          return mjxCount > 0 ? 'math-ready' : 'body-ready';
+        });
+      }).catch(function () {
+        return 'typeset-error';
+      });
+    };
+  </script>
+</body>
+</html>
