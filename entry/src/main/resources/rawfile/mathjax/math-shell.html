@@ -226,16 +226,19 @@
       border: 1px solid #DBEAFE;
       background: #F8FAFF;
       text-align: center;
-      overflow: hidden;
+      overflow-x: auto;
+      overflow-y: visible;
+      -webkit-overflow-scrolling: touch;
       color: inherit;
     }
 
     .math-block .math-render {
-      position: relative;
+      display: inline-block;
       z-index: 1;
       color: inherit;
-      width: 100%;
-      overflow: hidden;
+      min-width: 100%;
+      width: max-content;
+      overflow: visible;
     }
 
     .math-block mjx-container {
@@ -243,13 +246,13 @@
       margin: 0 auto !important;
       color: inherit !important;
       pointer-events: none !important;
-      max-width: 100% !important;
+      max-width: none !important;
       overflow: visible !important;
     }
 
     .math-block mjx-container[jax="SVG"] > svg {
       display: block;
-      max-width: 100%;
+      max-width: none;
       height: auto !important;
       margin: 0 auto;
     }

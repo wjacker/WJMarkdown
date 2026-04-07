@@ -310,8 +310,8 @@ struct Index {
 
   @Builder
   private AssistantActionsBuilder(message: ChatMessage) {
-    Row({ space: 8 }) {
-      Row({ space: 4 }) {
+    Row({ space: 6 }) {
+      Row({ space: 2 }) {
         Button() {
           Image($r('app.media.icon_ai_copy'))
             .width(Index.ACTION_ICON_SIZE)
@@ -414,10 +414,6 @@ struct Index {
         width: 1,
         color: '#E2E8F0'
       })
-      .layoutWeight(1)
-      .constraintSize({
-        maxWidth: '66%'
-      })
       .alignSelf(ItemAlign.Start)
 
       Blank()
@@ -475,7 +471,6 @@ struct Index {
           width: 1,
           color: '#E2E8F0'
         })
-        .margin({ left: 10, right: 16 })
         .alignSelf(ItemAlign.End)
       }
     }
