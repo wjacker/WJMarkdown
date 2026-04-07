@@ -102,15 +102,23 @@ export class HiAgentService {
     const messages: Array<HiAgentHistoryMessage> = [];
     for (let index: number = 0; index < messageItems.length; index++) {
       const item: ESObject = messageItems[index];
-      const answerInfo: ESObject = HiAgentService.readObject(item, 'AnswerInfo');
+      const answerInfoObject: ESObject = HiAgentService.readObject(item, 'AnswerInfo');
+      const answerInfo: HiAgentMessageAnswerInfo = HiAgentService.buildMessageAnswerInfo(answerInfoObject);
+      const otherAnswerObjects: Array<ESObject> = HiAgentService.readObjectArray(item, 'OtherAnswers');
+      const otherAnswers: Array<HiAgentMessageAnswerInfo> = [];
+      for (let answerIndex: number = 0; answerIndex < otherAnswerObjects.length; answerIndex++) {
+        otherAnswers.push(HiAgentService.buildMessageAnswerInfo(otherAnswerObjects[answerIndex]));
+      }
       messages.push(new HiAgentHistoryMessage(
         HiAgentService.readString(item, 'ConversationID'),
         HiAgentService.readString(item, 'QueryID'),
         HiAgentService.readString(item, 'Query'),
-        HiAgentService.readString(answerInfo, 'Answer'),
-        HiAgentService.readString(answerInfo, 'MessageID'),
-        HiAgentService.readString(answerInfo, 'TaskID'),
-        HiAgentService.readNumber(answerInfo, 'CreatedTime')
+        answerInfo.answer,
+        answerInfo.messageId,
+        answerInfo.taskId,
+        answerInfo.createdTime,
+        answerInfo,
+        otherAnswers
       ));
     }
 

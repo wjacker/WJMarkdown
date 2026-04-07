@@ -164,6 +164,8 @@ export class HiAgentHistoryMessage {
   messageId: string;
   taskId: string;
   createdTime: number;
+  answerInfo: HiAgentMessageAnswerInfo;
+  otherAnswers: Array<HiAgentMessageAnswerInfo>;
 
   constructor(
     conversationId: string = '',
@@ -172,7 +174,9 @@ export class HiAgentHistoryMessage {
     answer: string = '',
     messageId: string = '',
     taskId: string = '',
-    createdTime: number = 0
+    createdTime: number = 0,
+    answerInfo: HiAgentMessageAnswerInfo = new HiAgentMessageAnswerInfo(),
+    otherAnswers: Array<HiAgentMessageAnswerInfo> = []
   ) {
     this.conversationId = conversationId;
     this.queryId = queryId;
@@ -181,6 +185,8 @@ export class HiAgentHistoryMessage {
     this.messageId = messageId;
     this.taskId = taskId;
     this.createdTime = createdTime;
+    this.answerInfo = answerInfo;
+    this.otherAnswers = otherAnswers;
   }
 }
 

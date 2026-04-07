@@ -17,6 +17,8 @@
         typeset: false
       },
       options: {
+        enableMenu: false,
+        ignoreHtmlClass: 'math-select-source',
         skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
       }
     };
@@ -29,6 +31,7 @@
       padding: 0;
       background: transparent;
       overflow-x: hidden;
+      -webkit-tap-highlight-color: transparent;
     }
 
     body {
@@ -36,6 +39,7 @@
       line-height: 1.6;
       word-break: break-word;
       font-family: "HarmonyOS Sans", sans-serif;
+      color: #1E293B;
     }
 
     #root {
@@ -187,7 +191,18 @@
     }
 
     .math-inline {
-      color: #1D4ED8;
+      position: relative;
+      display: inline-block;
+      color: inherit;
+      max-width: 100%;
+    }
+
+    .math-inline .math-render {
+      display: inline-block;
+      position: relative;
+      z-index: 1;
+      color: inherit;
+      max-width: 100%;
     }
 
     .math-inline mjx-container {
@@ -195,20 +210,51 @@
       margin: 0 2px !important;
       vertical-align: middle;
       max-width: 100%;
+      color: inherit !important;
+      pointer-events: none !important;
     }
 
     .math-block {
+      position: relative;
       padding: 14px 16px;
       border-radius: 18px;
       border: 1px solid #DBEAFE;
       background: #F8FAFF;
       text-align: center;
       overflow-x: auto;
+      color: inherit;
+    }
+
+    .math-block .math-render {
+      position: relative;
+      z-index: 1;
+      color: inherit;
     }
 
     .math-block mjx-container {
       display: block !important;
       margin: 0 auto !important;
+      color: inherit !important;
+      pointer-events: none !important;
+    }
+
+    .math-select-source {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      color: transparent;
+      background: transparent;
+      white-space: pre-wrap;
+      word-break: break-word;
+      user-select: text;
+      -webkit-user-select: text;
+      -webkit-touch-callout: none;
+      caret-color: transparent;
+      opacity: 0.01;
+    }
+
+    .math-inline .math-select-source {
+      white-space: nowrap;
     }
 
     hr {

@@ -27,7 +27,11 @@ export class MarkdownHtmlRenderer {
       return `<h${block.level}>${MarkdownHtmlRenderer.renderInlineTokens(block.tokens)}</h${block.level}>`;
     }
     if (block.type === MarkdownBlockType.Math) {
-      return `<div class="math-block">\\[${MarkdownHtmlRenderer.escapeHtml(block.math)}\\]</div>`;
+      const rawMath: string = MarkdownHtmlRenderer.escapeHtml(block.math);
+      return `<div class="math-block">` +
+        `<div class="math-select-source">${rawMath}</div>` +
+        `<div class="math-render">\\[${rawMath}\\]</div>` +
+        `</div>`;
     }
     if (block.type === MarkdownBlockType.Code) {
       return `<pre><code>${MarkdownHtmlRenderer.escapeHtml(block.code)}</code></pre>`;
@@ -129,7 +133,11 @@ export class MarkdownHtmlRenderer {
 
   private static renderInlineToken(token: InlineToken): string {
     if ((token.style & InlineTokenStyle.Math) !== 0) {
-      return `<span class="math-inline">\\(${MarkdownHtmlRenderer.escapeHtml(token.text)}\\)</span>`;
+      const rawMath: string = MarkdownHtmlRenderer.escapeHtml(token.text);
+      return `<span class="math-inline">` +
+        `<span class="math-select-source">${rawMath}</span>` +
+        `<span class="math-render">\\(${rawMath}\\)</span>` +
+        `</span>`;
     }
 
     let html: string = MarkdownHtmlRenderer.escapeHtml(token.text);

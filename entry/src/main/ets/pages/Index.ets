@@ -411,14 +411,15 @@ struct Index {
         Row({ space: 4 }) {
           Button() {
             Image($r('app.media.icon_ai_previous'))
-              .width(12)
-              .height(12)
-              .fillColor(message.activeAnswerVersionIndex > 0 ? '#64748B' : '#CBD5E1')
+              .width(18)
+              .height(18)
+              .objectFit(ImageFit.Contain)
+              .opacity(message.activeAnswerVersionIndex > 0 ? 1 : 0.45)
           }
-            .width(24)
-            .height(24)
-            .backgroundColor('#F8FAFC')
-            .borderRadius(12)
+            .width(22)
+            .height(22)
+            .backgroundColor('#00000000')
+            .borderRadius(11)
             .padding(0)
             .enabled(message.activeAnswerVersionIndex > 0)
             .onClick(() => {
@@ -432,14 +433,15 @@ struct Index {
 
           Button() {
             Image($r('app.media.icon_ai_next'))
-              .width(12)
-              .height(12)
-              .fillColor(message.activeAnswerVersionIndex + 1 < this.resolveAnswerVersionCount(message) ? '#64748B' : '#CBD5E1')
+              .width(18)
+              .height(18)
+              .objectFit(ImageFit.Contain)
+              .opacity(message.activeAnswerVersionIndex + 1 < this.resolveAnswerVersionCount(message) ? 1 : 0.45)
           }
-            .width(24)
-            .height(24)
-            .backgroundColor('#F8FAFC')
-            .borderRadius(12)
+            .width(22)
+            .height(22)
+            .backgroundColor('#00000000')
+            .borderRadius(11)
             .padding(0)
             .enabled(message.activeAnswerVersionIndex + 1 < this.resolveAnswerVersionCount(message))
             .onClick(() => {
@@ -453,6 +455,7 @@ struct Index {
           width: 1,
           color: '#E2E8F0'
         })
+        .margin({ right: 6 })
       }
     }
     .width('100%')
@@ -667,7 +670,6 @@ struct Index {
       this.answerVariantsByMessageId.clear();
       this.messages = this.buildHistoryMessages(historyMessages);
       this.statusText = historyMessages.length > 0 ? `已同步 ${historyMessages.length} 条历史记录。` : '当前会话还没有历史消息。';
-      void this.hydrateHistoryAnswerVariants();
       this.shouldAutoScrollToBottom = true;
       this.scrollToBottom(true);
     } catch (error) {
@@ -911,6 +913,20 @@ struct Index {
     return historyVariants;
   }
 
+  private findVariantIndexByServiceMessageId(variants: Array<ChatAnswerVariant>, serviceMessageId: string): number {
+    const normalizedMessageId: string = serviceMessageId.trim();
+    if (normalizedMessageId.length === 0) {
+      return -1;
+    }
+
+    for (let index: number = 0; index < variants.length; index++) {
+      if (variants[index].serviceMessageId.trim() === normalizedMessageId) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
   private buildVariantMergeKey(variant: ChatAnswerVariant): string {
     if (variant.serviceMessageId.trim().length > 0) {
       return `id:${variant.serviceMessageId.trim()}`;
@@ -1048,39 +1064,38 @@ struct Index {
         assistantMessage.serviceMessageId = historyMessage.messageId;
         assistantMessage.taskId = historyMessage.taskId;
         assistantMessage.createdAt = historyMessage.createdTime * 1000;
-        const variants: Array<ChatAnswerVariant> = [this.createAnswerVariantFromMessage(assistantMessage)];
+        const variants: Array<ChatAnswerVariant> = this.buildVariantsFromHistoryMessage(historyMessage);
         this.replaceAnswerVariants(assistantMessage.id, variants);
         this.applyAnswerVariantMeta(assistantMessage, variants);
+        assistantMessage.answerVersionCount = variants.length;
+        assistantMessage.activeAnswerVersionIndex = variants.length > 0 ? variants.length - 1 : 0;
+        this.applyActiveVariantToMessage(assistantMessage);
         nextMessages.push(assistantMessage);
       }
     }
     return nextMessages;
   }
 
-  private async hydrateHistoryAnswerVariants(): Promise<void> {
-    const assistantMessageIds: Array<string> = [];
-    for (let index: number = 0; index < this.messages.length; index++) {
-      const message: ChatMessage = this.messages[index];
-      if (message.role !== MessageRole.Assistant) {
-        continue;
-      }
-      if (message.serviceMessageId.trim().length === 0) {
-        continue;
-      }
-      assistantMessageIds.push(message.id);
+  private buildVariantsFromHistoryMessage(historyMessage: HiAgentHistoryMessage): Array<ChatAnswerVariant> {
+    const variants: Array<ChatAnswerVariant> = [];
+    for (let index: number = 0; index < historyMessage.otherAnswers.length; index++) {
+      variants.push(this.buildVariantFromAnswerInfo(historyMessage.otherAnswers[index]));
     }
 
-    for (let index: number = 0; index < assistantMessageIds.length; index++) {
-      const localMessageId: string = assistantMessageIds[index];
-      const message: ChatMessage | null = this.getMessageById(localMessageId);
-      if (message === null) {
-        continue;
-      }
-      if (this.resolveAnswerVersionCount(message) > 1) {
-        continue;
-      }
-      await this.refreshMessageVariants(localMessageId, message.serviceMessageId);
+    if (historyMessage.answerInfo.messageId.trim().length > 0 || historyMessage.answerInfo.answer.trim().length > 0) {
+      variants.push(this.buildVariantFromAnswerInfo(historyMessage.answerInfo));
+    } else if (historyMessage.answer.trim().length > 0) {
+      const fallbackAnswerInfo: HiAgentMessageAnswerInfo = new HiAgentMessageAnswerInfo(
+        historyMessage.answer,
+        historyMessage.messageId,
+        historyMessage.createdTime,
+        historyMessage.taskId
+      );
+      variants.push(this.buildVariantFromAnswerInfo(fallbackAnswerInfo));
     }
+
+    variants.sort((left: ChatAnswerVariant, right: ChatAnswerVariant) => left.createdAt - right.createdAt);
+    return variants;
   }
 
   private async ensureConversation(config: HiAgentConfig): Promise<string> {
@@ -1889,17 +1904,19 @@ struct Index {
       return;
     }
 
+    const optimisticMessage: ChatMessage = hydratedMessage.copy();
+    optimisticMessage.activeAnswerVersionIndex = nextIndex;
+    optimisticMessage.answerVersionCount = variants.length;
+    this.applyActiveVariantToMessage(optimisticMessage);
+    this.applyMessageToList(messageIndex, optimisticMessage);
+
     try {
       await HiAgentService.setMessageAnswerUsed(config, targetVariant.serviceMessageId);
-      const refreshedMessage: ChatMessage | null = await this.refreshMessageVariants(messageId, targetVariant.serviceMessageId);
-      if (refreshedMessage === null) {
-        const nextMessage: ChatMessage = hydratedMessage.copy();
-        nextMessage.activeAnswerVersionIndex = nextIndex;
-        this.applyActiveVariantToMessage(nextMessage);
-        this.applyMessageToList(messageIndex, nextMessage);
-      }
       this.statusText = `已切换到第 ${nextIndex + 1}/${variants.length} 个回复。`;
     } catch (error) {
+      const rollbackMessage: ChatMessage = hydratedMessage.copy();
+      rollbackMessage.answerVersionCount = variants.length;
+      this.applyMessageToList(messageIndex, rollbackMessage);
       this.statusText = `切换回复失败：${this.stringifyError(error)}`;
       this.showToast('切换回复失败');
     }
@@ -1951,9 +1968,14 @@ struct Index {
       }
 
       this.replaceAnswerVariants(messageId, nextVariants);
-      const activeIndex: number = nextVariants.length > 0 ? nextVariants.length - 1 : 0;
+      let activeIndex: number = this.findVariantIndexByServiceMessageId(nextVariants, messageInfo.answerInfo.messageId);
+      if (activeIndex < 0) {
+        activeIndex = nextVariants.length > 0 ? nextVariants.length - 1 : 0;
+      }
       nextMessage.activeAnswerVersionIndex = activeIndex;
+      nextMessage.answerVersionCount = messageInfo.otherAnswers.length + 1;
       this.applyActiveVariantToMessage(nextMessage);
+      nextMessage.answerVersionCount = nextVariants.length;
       this.applyMessageToList(messageIndex, nextMessage);
       return this.messages[messageIndex];
     } catch (error) {
