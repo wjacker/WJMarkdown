@@ -814,7 +814,8 @@ struct Index {
     }
   }
 
-  private upsertConversationItem(appConversationId: string, title: string = '', _preview: string = '', updatedAt: number = 0): void {
+  private upsertConversationItem(appConversationId: string, title: string = '', _preview: string = '', updatedAt: number = 0,
+    forceTitleUpdate: boolean = false): void {
     const normalizedId: string = appConversationId.trim();
     if (normalizedId.length === 0) {
       return;
@@ -824,9 +825,9 @@ struct Index {
     const nextItems: Array<AgentConversationItem> = [];
     let updated: boolean = false;
     for (let index: number = 0; index < this.conversationItems.length; index++) {
-        const nextItem: AgentConversationItem = this.conversationItems[index].copy();
-        if (nextItem.appConversationId === normalizedId) {
-        if (title.trim().length > 0 && nextItem.title.trim().length === 0) {
+      const nextItem: AgentConversationItem = this.conversationItems[index].copy();
+      if (nextItem.appConversationId === normalizedId) {
+        if (title.trim().length > 0 && (forceTitleUpdate || nextItem.title.trim().length === 0)) {
           nextItem.title = title.trim();
         }
         nextItem.createdAt = normalizedUpdatedAt;
@@ -1686,6 +1687,7 @@ struct Index {
         this.syncMessageUiState(nextMessage);
         this.applyMessageToList(messageIndex, nextMessage);
       }
+      void this.applyPendingConversationTitle(localAssistantMessageId);
     }
     if (this.activeStreamSession !== null) {
       this.activeStreamSession.close();
@@ -1728,7 +1730,7 @@ struct Index {
       return;
     }
 
-    this.upsertConversationItem(appConversationId, pendingTitle, '', Date.now());
+      this.upsertConversationItem(appConversationId, pendingTitle, '', Date.now(), true);
     const config: HiAgentConfig = this.buildConfig();
     if (!config.isReady()) {
       return;
