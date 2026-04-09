@@ -227,8 +227,11 @@
       background: #F8FAFF;
       text-align: center;
       overflow-x: auto;
-      overflow-y: visible;
+      overflow-y: hidden;
       -webkit-overflow-scrolling: touch;
+      overscroll-behavior-x: contain;
+      overscroll-behavior-y: none;
+      touch-action: pan-x;
       color: inherit;
     }
 
