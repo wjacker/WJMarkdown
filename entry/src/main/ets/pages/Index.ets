@@ -1,4 +1,5 @@
 import { ChatBubble } from '../components/ChatBubble';
+import { ChatBubbleActionDispatcher, ChatBubbleActionType } from '../components/ChatBubbleActionDispatcher';
 import pasteboard from '@ohos.pasteboard';
 import promptAction from '@ohos.promptAction';
 import preferences from '@ohos.data.preferences';
@@ -16,11 +17,6 @@ struct Index {
   private static readonly KEY_USER_ID: string = 'user_id';
   private static readonly KEY_CONVERSATION_ID: string = 'conversation_id';
   private static readonly KEY_CONFIG_EXPANDED: string = 'config_expanded';
-  private static readonly ACTION_ICON_SIZE: number = 12;
-  private static readonly ACTION_BUTTON_SIZE: number = 24;
-  private static readonly ACTION_BUTTON_RADIUS: number = 12;
-  private static readonly ACTION_GROUP_PADDING_V: number = 5;
-  private static readonly ACTION_GROUP_PADDING_H: number = 7;
 
   @State private messages: Array<ChatMessage> = [];
   @State private draft: string = '请生成一段包含任务列表、代码块和表格的 Markdown 回复。';
@@ -48,11 +44,15 @@ struct Index {
   private answerVariantsByMessageId: Map<string, Array<ChatAnswerVariant>> = new Map();
 
   aboutToAppear(): void {
+    ChatBubbleActionDispatcher.register((messageId: string, action: ChatBubbleActionType) => {
+      this.handleChatBubbleAction(messageId, action);
+    });
     this.resetConversation();
     this.restoreSavedConfig();
   }
 
   aboutToDisappear(): void {
+    ChatBubbleActionDispatcher.clear();
     this.flushConfigIfNeeded();
     this.stopRevealTimer();
     this.closeActiveSession();
@@ -68,21 +68,23 @@ struct Index {
         ForEach(this.messages, (message: ChatMessage) => {
           ListItem() {
             ChatBubble({
+              messageId: message.id,
               role: message.role,
               content: message.visibleContent,
               isStreaming: message.isStreaming,
               statusLabel: message.statusLabel,
               streamPhase: message.streamPhase,
-              actionContent: this.shouldShowAssistantActions(message)
-                ? () => {
-                    this.AssistantActionsBuilder(message);
-                  }
-                : undefined
+              feedback: message.feedback,
+              answerVersionCount: this.resolveAnswerVersionCount(message),
+              activeAnswerVersionIndex: message.activeAnswerVersionIndex,
+              isSpeaking: this.speakingMessageId === message.id,
+              showActions: this.shouldShowAssistantActions(message),
+              contentRenderToken: this.buildContentRenderToken(message),
+              actionRenderToken: this.buildActionRenderToken(message)
             })
             .padding({ top: 2, bottom: 6 })
           }
-        }, (message: ChatMessage) =>
-          `${message.id}-${message.visibleContent.length}-${message.isStreaming}-${message.streamPhase}-${message.statusLabel}-${message.feedback}-${message.activeAnswerVersionIndex}-${message.answerVersionCount}`)
+        }, (message: ChatMessage) => `${message.id}-${this.buildContentRenderToken(message)}`)
       }
       .width('100%')
       .layoutWeight(1)
@@ -308,176 +310,6 @@ struct Index {
     .backgroundColor('#FFF7ED')
   }
 
-  @Builder
-  private AssistantActionsBuilder(message: ChatMessage) {
-    Row({ space: 6 }) {
-      Row({ space: 2 }) {
-        Button() {
-          Image($r('app.media.icon_ai_copy'))
-            .width(Index.ACTION_ICON_SIZE)
-            .height(Index.ACTION_ICON_SIZE)
-            .fillColor(this.getActionIconColor(message, 'copy'))
-        }
-          .width(Index.ACTION_BUTTON_SIZE)
-          .height(Index.ACTION_BUTTON_SIZE)
-          .backgroundColor(this.getActionButtonBackground(message, 'copy'))
-          .borderRadius(Index.ACTION_BUTTON_RADIUS)
-          .padding(0)
-          .onClick(() => {
-            void this.copyMessageText(message.id);
-          })
-
-        Button() {
-          Image($r('app.media.icon_ai_regenerate'))
-            .width(Index.ACTION_ICON_SIZE)
-            .height(Index.ACTION_ICON_SIZE)
-            .fillColor(this.getActionIconColor(message, 'regenerate'))
-        }
-          .width(Index.ACTION_BUTTON_SIZE)
-          .height(Index.ACTION_BUTTON_SIZE)
-          .backgroundColor(this.getActionButtonBackground(message, 'regenerate'))
-          .borderRadius(Index.ACTION_BUTTON_RADIUS)
-          .padding(0)
-          .onClick(() => {
-            void this.queryAgainAssistantMessage(message.id);
-          })
-
-        Button() {
-          Image($r('app.media.icon_ai_delete'))
-            .width(Index.ACTION_ICON_SIZE)
-            .height(Index.ACTION_ICON_SIZE)
-            .fillColor(this.getActionIconColor(message, 'delete'))
-        }
-          .width(Index.ACTION_BUTTON_SIZE)
-          .height(Index.ACTION_BUTTON_SIZE)
-          .backgroundColor(this.getActionButtonBackground(message, 'delete'))
-          .borderRadius(Index.ACTION_BUTTON_RADIUS)
-          .padding(0)
-          .onClick(() => {
-            void this.deleteAssistantMessage(message.id);
-          })
-
-        Button() {
-          Image($r('app.media.icon_ai_thumb_up'))
-            .width(Index.ACTION_ICON_SIZE)
-            .height(Index.ACTION_ICON_SIZE)
-            .fillColor(this.getActionIconColor(message, 'like'))
-        }
-          .width(Index.ACTION_BUTTON_SIZE)
-          .height(Index.ACTION_BUTTON_SIZE)
-          .backgroundColor(this.getActionButtonBackground(message, 'like'))
-          .borderRadius(Index.ACTION_BUTTON_RADIUS)
-          .padding(0)
-          .onClick(() => {
-            void this.toggleFeedback(message.id, MessageFeedback.Like);
-          })
-
-        Button() {
-          Image($r('app.media.icon_ai_thumb_down'))
-            .width(Index.ACTION_ICON_SIZE)
-            .height(Index.ACTION_ICON_SIZE)
-            .fillColor(this.getActionIconColor(message, 'dislike'))
-        }
-          .width(Index.ACTION_BUTTON_SIZE)
-          .height(Index.ACTION_BUTTON_SIZE)
-          .backgroundColor(this.getActionButtonBackground(message, 'dislike'))
-          .borderRadius(Index.ACTION_BUTTON_RADIUS)
-          .padding(0)
-          .onClick(() => {
-            void this.toggleFeedback(message.id, MessageFeedback.Dislike);
-          })
-
-        Button() {
-          Image($r('app.media.icon_ai_sound'))
-            .width(Index.ACTION_ICON_SIZE)
-            .height(Index.ACTION_ICON_SIZE)
-            .fillColor(this.getActionIconColor(message, 'sound'))
-        }
-          .width(Index.ACTION_BUTTON_SIZE)
-          .height(Index.ACTION_BUTTON_SIZE)
-          .backgroundColor(this.getActionButtonBackground(message, 'sound'))
-          .borderRadius(Index.ACTION_BUTTON_RADIUS)
-          .padding(0)
-          .onClick(() => {
-            void this.toggleSpeakMessage(message.id);
-          })
-      }
-      .padding({
-        top: Index.ACTION_GROUP_PADDING_V,
-        right: Index.ACTION_GROUP_PADDING_H,
-        bottom: Index.ACTION_GROUP_PADDING_V,
-        left: Index.ACTION_GROUP_PADDING_H
-      })
-      .backgroundColor('#FFFFFF')
-      .borderRadius(15)
-      .border({
-        width: 1,
-        color: '#E2E8F0'
-      })
-      .alignSelf(ItemAlign.Start)
-
-      Blank()
-
-      if (this.shouldShowAnswerPager(message)) {
-        Row({ space: 4 }) {
-          Button() {
-            Image($r('app.media.icon_ai_previous'))
-              .width(Index.ACTION_ICON_SIZE)
-              .height(Index.ACTION_ICON_SIZE)
-              .objectFit(ImageFit.Contain)
-              .opacity(message.activeAnswerVersionIndex > 0 ? 1 : 0.45)
-          }
-            .width(Index.ACTION_BUTTON_SIZE)
-            .height(Index.ACTION_BUTTON_SIZE)
-            .backgroundColor('#00000000')
-            .borderRadius(Index.ACTION_BUTTON_RADIUS)
-            .padding(0)
-            .enabled(message.activeAnswerVersionIndex > 0)
-            .onClick(() => {
-              void this.switchAnswerVariant(message.id, -1);
-            })
-
-          Text(`${message.activeAnswerVersionIndex + 1}/${this.resolveAnswerVersionCount(message)}`)
-            .fontSize(10)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#64748B')
-
-          Button() {
-            Image($r('app.media.icon_ai_next'))
-              .width(Index.ACTION_ICON_SIZE)
-              .height(Index.ACTION_ICON_SIZE)
-              .objectFit(ImageFit.Contain)
-              .opacity(message.activeAnswerVersionIndex + 1 < this.resolveAnswerVersionCount(message) ? 1 : 0.45)
-          }
-            .width(Index.ACTION_BUTTON_SIZE)
-            .height(Index.ACTION_BUTTON_SIZE)
-            .backgroundColor('#00000000')
-            .borderRadius(Index.ACTION_BUTTON_RADIUS)
-            .padding(0)
-            .enabled(message.activeAnswerVersionIndex + 1 < this.resolveAnswerVersionCount(message))
-            .onClick(() => {
-              void this.switchAnswerVariant(message.id, 1);
-            })
-        }
-        .padding({
-          top: Index.ACTION_GROUP_PADDING_V,
-          right: Index.ACTION_GROUP_PADDING_H,
-          bottom: Index.ACTION_GROUP_PADDING_V,
-          left: Index.ACTION_GROUP_PADDING_H
-        })
-        .backgroundColor('#FFFFFF')
-        .borderRadius(15)
-        .border({
-          width: 1,
-          color: '#E2E8F0'
-        })
-        .alignSelf(ItemAlign.End)
-      }
-    }
-    .width('100%')
-    .alignItems(VerticalAlign.Center)
-  }
-
   private resolveAnswerVersionCount(message: ChatMessage): number {
     const localVariants: Array<ChatAnswerVariant> | undefined = this.answerVariantsByMessageId.get(message.id);
     if (localVariants !== undefined && localVariants.length > 0) {
@@ -493,8 +325,48 @@ struct Index {
       message.serviceMessageId.trim().length > 0;
   }
 
-  private shouldShowAnswerPager(message: ChatMessage): boolean {
-    return this.resolveAnswerVersionCount(message) > 1;
+  private buildContentRenderToken(message: ChatMessage): string {
+    return `${message.visibleContent.length}-${message.isStreaming}-${message.streamPhase}-${message.statusLabel}` +
+      `-${message.serviceMessageId}-${message.activeAnswerVersionIndex}`;
+  }
+
+  private buildActionRenderToken(message: ChatMessage): string {
+    return `${message.feedback}-${message.activeAnswerVersionIndex}-${this.resolveAnswerVersionCount(message)}` +
+      `-${this.speakingMessageId === message.id}-${message.isStreaming}-${message.serviceMessageId}`;
+  }
+
+  private handleChatBubbleAction(messageId: string, action: ChatBubbleActionType): void {
+    if (action === ChatBubbleActionType.Copy) {
+      void this.copyMessageText(messageId);
+      return;
+    }
+    if (action === ChatBubbleActionType.Regenerate) {
+      void this.queryAgainAssistantMessage(messageId);
+      return;
+    }
+    if (action === ChatBubbleActionType.Delete) {
+      void this.deleteAssistantMessage(messageId);
+      return;
+    }
+    if (action === ChatBubbleActionType.Like) {
+      void this.toggleFeedback(messageId, MessageFeedback.Like);
+      return;
+    }
+    if (action === ChatBubbleActionType.Dislike) {
+      void this.toggleFeedback(messageId, MessageFeedback.Dislike);
+      return;
+    }
+    if (action === ChatBubbleActionType.Sound) {
+      void this.toggleSpeakMessage(messageId);
+      return;
+    }
+    if (action === ChatBubbleActionType.Previous) {
+      void this.switchAnswerVariant(messageId, -1);
+      return;
+    }
+    if (action === ChatBubbleActionType.Next) {
+      void this.switchAnswerVariant(messageId, 1);
+    }
   }
 
   private resetConversation(): void {
@@ -1687,35 +1559,6 @@ struct Index {
     return '#92400E';
   }
 
-  private getActionButtonBackground(message: ChatMessage, action: string): string {
-    if (action === 'like' && message.feedback === MessageFeedback.Like) {
-      return '#DBEAFE';
-    }
-    if (action === 'dislike' && message.feedback === MessageFeedback.Dislike) {
-      return '#FEE2E2';
-    }
-    if (action === 'sound' && this.speakingMessageId === message.id) {
-      return '#CCFBF1';
-    }
-    return '#F8FAFC';
-  }
-
-  private getActionIconColor(message: ChatMessage, action: string): string {
-    if (action === 'like' && message.feedback === MessageFeedback.Like) {
-      return '#2563EB';
-    }
-    if (action === 'dislike' && message.feedback === MessageFeedback.Dislike) {
-      return '#DC2626';
-    }
-    if (action === 'sound' && this.speakingMessageId === message.id) {
-      return '#0F766E';
-    }
-    if (action === 'delete') {
-      return '#64748B';
-    }
-    return '#475569';
-  }
-
   private async copyMessageText(messageId: string): Promise<void> {
     const message: ChatMessage | null = this.getMessageById(messageId);
     if (message === null) {
@@ -1778,14 +1621,17 @@ struct Index {
       return;
     }
 
+    const regeneratedAssistantMessageId: string = this.createMessageId('assistant');
     const nextVariants: Array<ChatAnswerVariant> = this.cloneAnswerVariants(messageId);
-    const pendingVariant: ChatAnswerVariant = this.buildPendingQueryAgainVariant(messageId);
+    const pendingVariant: ChatAnswerVariant = this.buildPendingQueryAgainVariant(regeneratedAssistantMessageId);
     pendingVariant.serviceMessageId = activeVariant.serviceMessageId;
     pendingVariant.taskId = activeVariant.taskId;
     nextVariants.push(pendingVariant);
-    this.replaceAnswerVariants(messageId, nextVariants);
+    this.answerVariantsByMessageId.delete(messageId);
+    this.replaceAnswerVariants(regeneratedAssistantMessageId, nextVariants);
 
     sourceMessage.activeAnswerVersionIndex = nextVariants.length - 1;
+    sourceMessage.id = regeneratedAssistantMessageId;
     this.applyActiveVariantToMessage(sourceMessage);
     sourceMessage.conversationId = appConversationId;
     sourceMessage.queryId = '';
@@ -1801,14 +1647,15 @@ struct Index {
       nextMessages.splice(pairedUserMessageIndex, 1);
     }
     if (pairedUserMessage !== null) {
+      pairedUserMessage.id = this.createMessageId('user');
       nextMessages.push(pairedUserMessage);
     }
     nextMessages.push(sourceMessage);
     this.messages = nextMessages;
-    this.activeAssistantMessageId = messageId;
+    this.activeAssistantMessageId = regeneratedAssistantMessageId;
     this.isSending = true;
     this.statusText = '正在重新回答这条回复...';
-    this.startRevealTimer(messageId);
+    this.startRevealTimer(regeneratedAssistantMessageId);
     this.scrollToBottom(true);
 
     this.activeStreamSession = HiAgentService.startQueryAgainStream(
@@ -1816,13 +1663,13 @@ struct Index {
       appConversationId,
       activeVariant.serviceMessageId,
       (event: HiAgentStreamEvent) => {
-        this.handleStreamEvent(messageId, event);
+        this.handleStreamEvent(regeneratedAssistantMessageId, event);
       },
       () => {
-        this.completeAssistantMessage(messageId, '重新回答完成。', activeVariant.serviceMessageId);
+        this.completeAssistantMessage(regeneratedAssistantMessageId, '重新回答完成。', activeVariant.serviceMessageId);
       },
       (errorMessage: string) => {
-        this.failAssistantMessage(messageId, errorMessage);
+        this.failAssistantMessage(regeneratedAssistantMessageId, errorMessage);
       }
     );
   }

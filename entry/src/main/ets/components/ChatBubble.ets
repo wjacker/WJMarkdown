@@ -1,14 +1,33 @@
-import { ChatMessagePhase, MessageRole } from '../models/ChatModels';
+import { ChatMessagePhase, MessageFeedback, MessageRole } from '../models/ChatModels';
 import { MarkdownMessage } from './MarkdownMessage';
+import { ChatBubbleActionDispatcher, ChatBubbleActionType } from './ChatBubbleActionDispatcher';
 
 @Component
 export struct ChatBubble {
+  private static readonly ACTION_ICON_SIZE: number = 12;
+  private static readonly ACTION_BUTTON_SIZE: number = 24;
+  private static readonly ACTION_BUTTON_RADIUS: number = 12;
+  private static readonly ACTION_GROUP_PADDING_V: number = 5;
+  private static readonly ACTION_GROUP_PADDING_H: number = 7;
+
+  @Prop messageId: string = '';
   @Prop role: MessageRole = MessageRole.Assistant;
   @Prop content: string = '';
   @Prop isStreaming: boolean = false;
   @Prop statusLabel: string = '';
   @Prop streamPhase: ChatMessagePhase = ChatMessagePhase.Idle;
-  @BuilderParam actionContent?: () => void;
+  @Prop feedback: MessageFeedback = MessageFeedback.None;
+  @Prop answerVersionCount: number = 0;
+  @Prop activeAnswerVersionIndex: number = 0;
+  @Prop isSpeaking: boolean = false;
+  @Prop showActions: boolean = false;
+  @Prop contentRenderToken: string = '';
+  @Prop actionRenderToken: string = '';
+  @State private localFeedback: MessageFeedback = MessageFeedback.None;
+
+  aboutToAppear(): void {
+    this.localFeedback = this.feedback;
+  }
 
   build() {
     Column({ space: 8 }) {
@@ -31,12 +50,14 @@ export struct ChatBubble {
             this.UserTextBuilder();
           }
 
-          if (this.actionContent !== undefined) {
-            Column() {
-              this.actionContent();
-            }
-            .width('100%')
-            .padding({ left: 4, right: 4 })
+          if (this.showActions) {
+            ForEach([this.actionRenderToken], (_token: string) => {
+              Column() {
+                this.AssistantActionsBuilder();
+              }
+              .width('100%')
+              .padding({ left: 4, right: 4 })
+            }, (token: string) => token)
           }
         }
         .padding({
@@ -106,6 +127,134 @@ export struct ChatBubble {
       .fontWeight(FontWeight.Medium)
       .wordBreak(WordBreak.BREAK_WORD)
       .textAlign(TextAlign.Start)
+  }
+
+  @Builder
+  private AssistantActionsBuilder() {
+    Row({ space: 6 }) {
+      Row({ space: 2 }) {
+        this.ActionButtonBuilder('copy', () => {
+          ChatBubbleActionDispatcher.dispatch(this.messageId, ChatBubbleActionType.Copy);
+        })
+
+        this.ActionButtonBuilder('regenerate', () => {
+          ChatBubbleActionDispatcher.dispatch(this.messageId, ChatBubbleActionType.Regenerate);
+        })
+
+        this.ActionButtonBuilder('delete', () => {
+          ChatBubbleActionDispatcher.dispatch(this.messageId, ChatBubbleActionType.Delete);
+        })
+
+        this.ActionButtonBuilder('like', () => {
+          this.localFeedback = this.localFeedback === MessageFeedback.Like ? MessageFeedback.None : MessageFeedback.Like;
+          ChatBubbleActionDispatcher.dispatch(this.messageId, ChatBubbleActionType.Like);
+        })
+
+        this.ActionButtonBuilder('dislike', () => {
+          this.localFeedback = this.localFeedback === MessageFeedback.Dislike ? MessageFeedback.None : MessageFeedback.Dislike;
+          ChatBubbleActionDispatcher.dispatch(this.messageId, ChatBubbleActionType.Dislike);
+        })
+
+        this.ActionButtonBuilder('sound', () => {
+          ChatBubbleActionDispatcher.dispatch(this.messageId, ChatBubbleActionType.Sound);
+        })
+      }
+      .padding({
+        top: ChatBubble.ACTION_GROUP_PADDING_V,
+        right: ChatBubble.ACTION_GROUP_PADDING_H,
+        bottom: ChatBubble.ACTION_GROUP_PADDING_V,
+        left: ChatBubble.ACTION_GROUP_PADDING_H
+      })
+      .backgroundColor('#FFFFFF')
+      .borderRadius(15)
+      .border({
+        width: 1,
+        color: '#E2E8F0'
+      })
+      .alignSelf(ItemAlign.Start)
+
+      Blank()
+
+      if (this.answerVersionCount > 1) {
+        Row({ space: 4 }) {
+          Button() {
+            Image($r('app.media.icon_ai_previous'))
+              .width(ChatBubble.ACTION_ICON_SIZE)
+              .height(ChatBubble.ACTION_ICON_SIZE)
+              .objectFit(ImageFit.Contain)
+              .opacity(this.activeAnswerVersionIndex > 0 ? 1 : 0.45)
+          }
+            .width(ChatBubble.ACTION_BUTTON_SIZE)
+            .height(ChatBubble.ACTION_BUTTON_SIZE)
+            .backgroundColor('#00000000')
+            .borderRadius(ChatBubble.ACTION_BUTTON_RADIUS)
+            .padding(0)
+            .enabled(this.activeAnswerVersionIndex > 0)
+            .onClick(() => {
+              if (this.activeAnswerVersionIndex <= 0) {
+                return;
+              }
+              ChatBubbleActionDispatcher.dispatch(this.messageId, ChatBubbleActionType.Previous);
+            })
+
+          Text(`${this.activeAnswerVersionIndex + 1}/${this.answerVersionCount}`)
+            .fontSize(10)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#64748B')
+
+          Button() {
+            Image($r('app.media.icon_ai_next'))
+              .width(ChatBubble.ACTION_ICON_SIZE)
+              .height(ChatBubble.ACTION_ICON_SIZE)
+              .objectFit(ImageFit.Contain)
+              .opacity(this.activeAnswerVersionIndex + 1 < this.answerVersionCount ? 1 : 0.45)
+          }
+            .width(ChatBubble.ACTION_BUTTON_SIZE)
+            .height(ChatBubble.ACTION_BUTTON_SIZE)
+            .backgroundColor('#00000000')
+            .borderRadius(ChatBubble.ACTION_BUTTON_RADIUS)
+            .padding(0)
+            .enabled(this.activeAnswerVersionIndex + 1 < this.answerVersionCount)
+            .onClick(() => {
+              if (this.activeAnswerVersionIndex + 1 >= this.answerVersionCount) {
+                return;
+              }
+              ChatBubbleActionDispatcher.dispatch(this.messageId, ChatBubbleActionType.Next);
+            })
+        }
+        .padding({
+          top: ChatBubble.ACTION_GROUP_PADDING_V,
+          right: ChatBubble.ACTION_GROUP_PADDING_H,
+          bottom: ChatBubble.ACTION_GROUP_PADDING_V,
+          left: ChatBubble.ACTION_GROUP_PADDING_H
+        })
+        .backgroundColor('#FFFFFF')
+        .borderRadius(15)
+        .border({
+          width: 1,
+          color: '#E2E8F0'
+        })
+        .alignSelf(ItemAlign.End)
+      }
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  private ActionButtonBuilder(action: string, onClick: () => void) {
+    Button() {
+      Image(this.getActionIconResource(action))
+        .width(ChatBubble.ACTION_ICON_SIZE)
+        .height(ChatBubble.ACTION_ICON_SIZE)
+        .fillColor(this.getActionIconColor(action))
+    }
+      .width(ChatBubble.ACTION_BUTTON_SIZE)
+      .height(ChatBubble.ACTION_BUTTON_SIZE)
+      .backgroundColor(this.getActionButtonBackground(action))
+      .borderRadius(ChatBubble.ACTION_BUTTON_RADIUS)
+      .padding(0)
+      .onClick(onClick)
   }
 
   private shouldShowThinkingOnly(): boolean {
@@ -190,4 +339,53 @@ export struct ChatBubble {
     }
     return '#34C27E';
   }
+
+  private getActionButtonBackground(action: string): string {
+    if (action === 'like' && this.localFeedback === MessageFeedback.Like) {
+      return '#DBEAFE';
+    }
+    if (action === 'dislike' && this.localFeedback === MessageFeedback.Dislike) {
+      return '#FEE2E2';
+    }
+    if (action === 'sound' && this.isSpeaking) {
+      return '#CCFBF1';
+    }
+    return '#F8FAFC';
+  }
+
+  private getActionIconColor(action: string): string {
+    if (action === 'like' && this.localFeedback === MessageFeedback.Like) {
+      return '#2563EB';
+    }
+    if (action === 'dislike' && this.localFeedback === MessageFeedback.Dislike) {
+      return '#DC2626';
+    }
+    if (action === 'sound' && this.isSpeaking) {
+      return '#0F766E';
+    }
+    if (action === 'delete') {
+      return '#64748B';
+    }
+    return '#475569';
+  }
+
+  private getActionIconResource(action: string) {
+    if (action === 'copy') {
+      return $r('app.media.icon_ai_copy');
+    }
+    if (action === 'regenerate') {
+      return $r('app.media.icon_ai_regenerate');
+    }
+    if (action === 'delete') {
+      return $r('app.media.icon_ai_delete');
+    }
+    if (action === 'like') {
+      return $r('app.media.icon_ai_thumb_up');
+    }
+    if (action === 'dislike') {
+      return $r('app.media.icon_ai_thumb_down');
+    }
+    return $r('app.media.icon_ai_sound');
+  }
+
 }
