@@ -41,9 +41,9 @@ export struct ChatBubble {
         }
         .padding({
           top: this.role === MessageRole.Assistant ? 18 : 20,
-          right: this.role === MessageRole.Assistant ? 22 : 24,
+          right: this.role === MessageRole.Assistant ? 22 : 20,
           bottom: this.role === MessageRole.Assistant ? 18 : 20,
-          left: this.role === MessageRole.Assistant ? 22 : 24
+          left: this.role === MessageRole.Assistant ? 22 : 20
         })
         .constraintSize({
           maxWidth: this.role === MessageRole.Assistant ? '88%' : '78%'
