@@ -478,19 +478,19 @@ struct Index {
     .alignItems(VerticalAlign.Center)
   }
 
-  private shouldShowAssistantActions(message: ChatMessage): boolean {
-    return message.role === MessageRole.Assistant &&
-      message.visibleContent.trim().length > 0 &&
-      !message.isStreaming &&
-      message.serviceMessageId.trim().length > 0;
-  }
-
   private resolveAnswerVersionCount(message: ChatMessage): number {
     const localVariants: Array<ChatAnswerVariant> | undefined = this.answerVariantsByMessageId.get(message.id);
     if (localVariants !== undefined && localVariants.length > 0) {
       return localVariants.length;
     }
     return message.answerVersionCount;
+  }
+
+  private shouldShowAssistantActions(message: ChatMessage): boolean {
+    return message.role === MessageRole.Assistant &&
+      message.visibleContent.trim().length > 0 &&
+      !message.isStreaming &&
+      message.serviceMessageId.trim().length > 0;
   }
 
   private shouldShowAnswerPager(message: ChatMessage): boolean {
@@ -1809,13 +1809,13 @@ struct Index {
       return;
     }
     const activeVariant: ChatAnswerVariant | null = this.getActiveAnswerVariant(hydratedMessage);
-    if (activeVariant === null || activeVariant.serviceMessageId.trim().length === 0 || hydratedMessage.queryId.trim().length === 0) {
-      this.showToast('当前回复缺少删除所需的 messageId 或 queryId');
+    if (activeVariant === null || activeVariant.serviceMessageId.trim().length === 0) {
+      this.showToast('当前回复缺少删除所需的 messageId');
       return;
     }
 
     try {
-      await HiAgentService.deleteMessage(config, activeVariant.serviceMessageId, hydratedMessage.queryId);
+      await HiAgentService.deleteMessage(config, activeVariant.serviceMessageId);
       if (this.speakingMessageId === messageId) {
         this.stopSpeakingMessage(false);
       }
@@ -1841,8 +1841,9 @@ struct Index {
       }
       this.statusText = '已删除当前回复。';
     } catch (error) {
-      this.statusText = `删除失败：${this.stringifyError(error)}`;
-      this.showToast('删除当前回复失败');
+      const errorMessage: string = this.stringifyError(error);
+      this.statusText = `删除失败：${errorMessage}`;
+      this.showToast(errorMessage);
     }
   }
 

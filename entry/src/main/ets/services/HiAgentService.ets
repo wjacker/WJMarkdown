@@ -161,11 +161,12 @@ export class HiAgentService {
     );
   }
 
-  static async deleteMessage(config: HiAgentConfig, messageId: string, queryId: string): Promise<void> {
+  static async deleteMessage(config: HiAgentConfig, messageId: string): Promise<void> {
+    const normalizedMessageId: string = messageId.trim();
     await HiAgentService.requestJson(
       config,
       '/delete_message',
-      new HiAgentDeleteMessageRequest(config.resolvedAppKey(), messageId.trim(), queryId.trim(), config.userId)
+      new HiAgentDeleteMessageRequest(config.resolvedAppKey(), normalizedMessageId, '', config.userId)
     );
   }
 
@@ -233,6 +234,8 @@ export class HiAgentService {
     const session: HiAgentStreamSession = new HiAgentStreamSession(request);
     const decoder: util.TextDecoder = util.TextDecoder.create('utf-8', { ignoreBOM: true });
     let sseBuffer: string = '';
+    let errorBodyBuffer: string = '';
+    let responseCode: number = 0;
     let finished: boolean = false;
 
     const cleanup = (): void => {
@@ -279,6 +282,10 @@ export class HiAgentService {
       }
       const chunkText: string = decoder.decodeToString(new Uint8Array(chunk), { stream: true });
       HiAgentService.logInfo(`stream raw chunk path=${path} chunk=${HiAgentService.redactSensitiveText(chunkText)}`);
+      if (responseCode > 0 && (responseCode < 200 || responseCode >= 300)) {
+        errorBodyBuffer += chunkText;
+        return;
+      }
       const parsed = HiAgentSseParser.parseChunk(chunkText, sseBuffer);
       sseBuffer = parsed.remaining;
       emitEvents(parsed.events);
@@ -290,6 +297,14 @@ export class HiAgentService {
       }
 
       const tailText: string = decoder.decodeToString(new Uint8Array(0), { stream: false });
+      if (responseCode > 0 && (responseCode < 200 || responseCode >= 300)) {
+        errorBodyBuffer += tailText;
+        fail(HiAgentService.extractApiErrorMessageFromText(
+          errorBodyBuffer,
+          `HiAgent 流式请求失败，HTTP ${responseCode}。`
+        ));
+        return;
+      }
       const parsed = HiAgentSseParser.parseChunk(tailText, sseBuffer);
       sseBuffer = parsed.remaining;
       emitEvents(parsed.events);
@@ -320,14 +335,12 @@ export class HiAgentService {
     };
     HiAgentService.logInfo(`stream request start path=${path} url=${streamUrl} payload=${HiAgentService.safeStringify(payload)}`);
 
-    void request.requestInStream(streamUrl, options).then((responseCode: number) => {
+    void request.requestInStream(streamUrl, options).then((streamResponseCode: number) => {
       if (finished) {
         return;
       }
+      responseCode = Number(streamResponseCode);
       HiAgentService.logInfo(`stream response code path=${path} code=${responseCode}`);
-      if (responseCode < 200 || responseCode >= 300) {
-        fail(`HiAgent chat_query 返回异常状态码 ${responseCode}。`);
-      }
     }).catch((error: Object) => {
       fail(HiAgentService.stringifyError(error));
     });
@@ -355,13 +368,21 @@ export class HiAgentService {
       const responseText: string = HiAgentService.readResponseText(response.result);
       const responseCode: number = Number(response.responseCode);
       HiAgentService.logInfo(`json response path=${path} code=${responseCode} body=${HiAgentService.redactSensitiveText(responseText)}`);
+      const payloadObject: ESObject = responseText.trim().length > 0 ? JSON.parse(responseText) as ESObject : {};
+      const responseMetadataErrorMessage: string = HiAgentService.readResponseMetadataErrorMessage(payloadObject);
       if (responseCode < 200 || responseCode >= 300) {
+        if (responseMetadataErrorMessage.length > 0) {
+          throw new Error(responseMetadataErrorMessage);
+        }
         throw new Error(`HiAgent 请求失败，HTTP ${responseCode}：${responseText}`);
+      }
+      if (responseMetadataErrorMessage.length > 0) {
+        throw new Error(responseMetadataErrorMessage);
       }
       if (responseText.trim().length === 0) {
         return {};
       }
-      return JSON.parse(responseText) as ESObject;
+      return payloadObject;
     } catch (error) {
       HiAgentService.logError(`json request failed path=${path} error=${HiAgentService.stringifyError(error)}`);
       throw new Error(HiAgentService.stringifyError(error));
@@ -437,6 +458,31 @@ export class HiAgentService {
       HiAgentService.readNumber(source, 'Latency'),
       HiAgentService.readString(source, 'TracingJsonStr')
     );
+  }
+
+  private static readResponseMetadataErrorMessage(source: ESObject): string {
+    const responseMetadata: ESObject = HiAgentService.readObject(source, 'ResponseMetadata');
+    const errorObject: ESObject = HiAgentService.readObject(responseMetadata, 'Error');
+    return HiAgentService.readString(errorObject, 'Message').trim();
+  }
+
+  private static extractApiErrorMessageFromText(responseText: string, fallbackMessage: string): string {
+    const normalizedText: string = responseText.trim();
+    if (normalizedText.length === 0) {
+      return fallbackMessage;
+    }
+
+    try {
+      const payloadObject: ESObject = JSON.parse(normalizedText) as ESObject;
+      const responseMetadataErrorMessage: string = HiAgentService.readResponseMetadataErrorMessage(payloadObject);
+      if (responseMetadataErrorMessage.length > 0) {
+        return responseMetadataErrorMessage;
+      }
+    } catch (_error) {
+      // Ignore parse failure and fall back to raw text.
+    }
+
+    return fallbackMessage.length > 0 ? `${fallbackMessage} ${normalizedText}` : normalizedText;
   }
 
   private static stringifyError(error: Object): string {
