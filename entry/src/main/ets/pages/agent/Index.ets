@@ -46,6 +46,7 @@ struct Index {
   private serviceConversationId: string = '';
   private ttsEngine: textToSpeech.TextToSpeechEngine | null = null;
   private answerVariantsByMessageId: Map<string, Array<ChatAnswerVariant>> = new Map();
+  private pendingConversationTitleByMessageId: Map<string, string> = new Map();
 
   aboutToAppear(): void {
     ChatBubbleActionDispatcher.register((messageId: string, action: ChatBubbleActionType) => {
@@ -418,7 +419,7 @@ struct Index {
           .borderRadius(14)
           .padding({ left: 12, right: 12 })
           .onChange((value: string) => {
-            this.renameDraft = value;
+            this.renameDraft = this.sanitizeConversationTitle(value, false);
           })
 
         Row({ space: 10 }) {
@@ -993,7 +994,7 @@ struct Index {
   }
 
   private async confirmRenameConversation(): Promise<void> {
-    const normalizedTitle: string = this.renameDraft.trim();
+    const normalizedTitle: string = this.sanitizeConversationTitle(this.renameDraft, false);
     if (normalizedTitle.length === 0) {
       this.showToast('会话名称不能为空');
       return;
@@ -1096,8 +1097,15 @@ struct Index {
     this.startRevealTimer(assistantMessageId);
 
     try {
+      const shouldUpdateNewConversationTitle: boolean = this.conversationId.trim().length === 0;
       const appConversationId: string = await this.ensureConversation(config);
-      this.upsertConversationItem(appConversationId, prompt, prompt, Date.now());
+      const sanitizedPromptTitle: string = this.sanitizeConversationTitle(prompt, true);
+      this.upsertConversationItem(appConversationId, sanitizedPromptTitle, prompt, Date.now());
+      if (shouldUpdateNewConversationTitle && sanitizedPromptTitle.length > 0) {
+        this.pendingConversationTitleByMessageId.set(assistantMessageId, sanitizedPromptTitle);
+      } else {
+        this.pendingConversationTitleByMessageId.delete(assistantMessageId);
+      }
       void this.refreshConversationList(false);
       this.bindPendingMessagesToConversation(appConversationId, assistantMessageId);
       this.updateAssistantPhase(assistantMessageId, ChatMessagePhase.Sending, '发送中', 'request_start');
@@ -1581,10 +1589,12 @@ struct Index {
       nextMessage.isStreaming = false;
       this.applyMessageToList(messageIndex, nextMessage);
     }
+    void this.applyPendingConversationTitle(localMessageId);
     this.finishSending(statusText);
   }
 
   private failAssistantMessage(localMessageId: string, errorMessage: string): void {
+    this.pendingConversationTitleByMessageId.delete(localMessageId);
     const messageIndex: number = this.findMessageIndex(localMessageId);
     if (messageIndex >= 0) {
       const nextMessage: ChatMessage = this.messages[messageIndex].copy();
@@ -1602,6 +1612,7 @@ struct Index {
   }
 
   private markAssistantStopped(localMessageId: string): void {
+    this.pendingConversationTitleByMessageId.delete(localMessageId);
     const messageIndex: number = this.findMessageIndex(localMessageId);
     if (messageIndex < 0) {
       return;
@@ -1635,6 +1646,42 @@ struct Index {
       this.activeStreamSession = null;
     }
     this.activeAssistantMessageId = '';
+  }
+
+  private sanitizeConversationTitle(title: string, stripControlChars: boolean): string {
+    let nextTitle: string = stripControlChars ? title.replace(/[\n\r\t]/g, '') : title;
+    nextTitle = nextTitle.trim();
+    if (nextTitle.length > 100) {
+      nextTitle = nextTitle.substring(0, 100);
+    }
+    return nextTitle;
+  }
+
+  private async applyPendingConversationTitle(localMessageId: string): Promise<void> {
+    const pendingTitle: string | undefined = this.pendingConversationTitleByMessageId.get(localMessageId);
+    if (pendingTitle === undefined || pendingTitle.trim().length === 0) {
+      return;
+    }
+    this.pendingConversationTitleByMessageId.delete(localMessageId);
+    const message: ChatMessage | null = this.getMessageById(localMessageId);
+    if (message === null) {
+      return;
+    }
+    const appConversationId: string = message.conversationId.trim().length > 0 ? message.conversationId.trim() : this.conversationId.trim();
+    if (appConversationId.length === 0) {
+      return;
+    }
+
+    this.upsertConversationItem(appConversationId, pendingTitle, '', Date.now());
+    const config: HiAgentConfig = this.buildConfig();
+    if (!config.isReady()) {
+      return;
+    }
+    try {
+      await HiAgentService.updateConversation(config, appConversationId, pendingTitle);
+    } catch (_error) {
+      // Keep the local title even if remote rename fails after a successful first reply.
+    }
   }
 
   private bindPendingMessagesToConversation(appConversationId: string, assistantMessageId: string): void {
