@@ -215,9 +215,15 @@ export class MarkdownParser {
     const currentLine: string = lines[startIndex];
     const trimmedLine: string = MarkdownParser.trimLine(currentLine);
     if (trimmedLine === '\\[') {
+      if (!MarkdownParser.hasClosingMathDelimiter(lines, startIndex + 1, endIndex, '\\]')) {
+        return null;
+      }
       return MarkdownParser.consumeDelimitedMathBlock(lines, startIndex, endIndex, '\\]');
     }
     if (trimmedLine === '$$') {
+      if (!MarkdownParser.hasClosingMathDelimiter(lines, startIndex + 1, endIndex, '$$')) {
+        return null;
+      }
       return MarkdownParser.consumeDelimitedMathBlock(lines, startIndex, endIndex, '$$');
     }
 
@@ -236,6 +242,16 @@ export class MarkdownParser {
     }
 
     return null;
+  }
+
+  private static hasClosingMathDelimiter(lines: Array<string>, startIndex: number, endIndex: number,
+    closingDelimiter: string): boolean {
+    for (let index: number = startIndex; index < endIndex; index++) {
+      if (MarkdownParser.trimLine(lines[index]) === closingDelimiter) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static consumeDelimitedMathBlock(lines: Array<string>, startIndex: number, endIndex: number,

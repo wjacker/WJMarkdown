@@ -46,11 +46,7 @@ export struct MarkdownMessage {
   }
 
   private shouldUseWebMathRenderer(): boolean {
-    if (this.isStreaming) {
-      return false;
-    }
-
-    return this.content.includes('\\(') ||
+    const containsMathLikeContent: boolean = this.content.includes('\\(') ||
       this.content.includes('\\[') ||
       this.content.includes('$$') ||
       /(^|[^\\])\$[^$]/.test(this.content) ||
@@ -65,6 +61,82 @@ export struct MarkdownMessage {
       this.content.includes('^{') ||
       this.content.includes('_{') ||
       /\([A-Za-z][A-Za-z0-9_^{}]*\)/.test(this.content);
+
+    if (!containsMathLikeContent) {
+      return false;
+    }
+
+    if (!this.isStreaming) {
+      return true;
+    }
+
+    return this.hasClosedMathSyntax(this.content);
+  }
+
+  private hasClosedMathSyntax(content: string): boolean {
+    return this.hasEvenUnescapedDelimiter(content, '$') &&
+      this.hasEvenUnescapedDoubleDollar(content) &&
+      this.hasBalancedPair(content, '\\(', '\\)') &&
+      this.hasBalancedPair(content, '\\[', '\\]');
+  }
+
+  private hasBalancedPair(content: string, openToken: string, closeToken: string): boolean {
+    let balance: number = 0;
+    let cursor: number = 0;
+
+    while (cursor < content.length) {
+      if (content.startsWith(openToken, cursor)) {
+        balance++;
+        cursor += openToken.length;
+        continue;
+      }
+      if (content.startsWith(closeToken, cursor)) {
+        if (balance <= 0) {
+          return false;
+        }
+        balance--;
+        cursor += closeToken.length;
+        continue;
+      }
+      cursor++;
+    }
+
+    return balance === 0;
+  }
+
+  private hasEvenUnescapedDelimiter(content: string, delimiter: string): boolean {
+    let count: number = 0;
+    for (let index: number = 0; index < content.length; index++) {
+      if (content[index] !== delimiter) {
+        continue;
+      }
+      if (index > 0 && content[index - 1] === '\\') {
+        continue;
+      }
+      if ((index > 0 && content[index - 1] === '$') || (index + 1 < content.length && content[index + 1] === '$')) {
+        continue;
+      }
+      count++;
+    }
+    return count % 2 === 0;
+  }
+
+  private hasEvenUnescapedDoubleDollar(content: string): boolean {
+    let count: number = 0;
+    let index: number = 0;
+    while (index < content.length - 1) {
+      if (content[index] === '\\') {
+        index += 2;
+        continue;
+      }
+      if (content[index] === '$' && content[index + 1] === '$') {
+        count++;
+        index += 2;
+        continue;
+      }
+      index++;
+    }
+    return count % 2 === 0;
   }
 
   @Builder
