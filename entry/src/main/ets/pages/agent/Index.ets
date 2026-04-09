@@ -5,7 +5,7 @@ import promptAction from '@ohos.promptAction';
 import preferences from '@ohos.data.preferences';
 import textToSpeech from '@hms.ai.textToSpeech';
 import { ChatAnswerVariant, ChatMessage, ChatMessagePhase, MessageFeedback, MessageRole } from './models/ChatModels';
-import { HiAgentConfig, HiAgentHistoryMessage, HiAgentMessageAnswerInfo, HiAgentStreamEvent } from './models/HiAgentModels';
+import { HiAgentConfig, HiAgentEventHelper, HiAgentHistoryMessage, HiAgentMessageAnswerInfo, HiAgentStreamEvent } from './models/HiAgentModels';
 import { HiAgentService, HiAgentStreamSession } from './services/HiAgentService';
 
 @Entry
@@ -949,7 +949,7 @@ struct Index {
     }
 
     const nextMessage: ChatMessage = this.messages[messageIndex].copy();
-    const normalizedEventName: string = this.normalizeStreamEventName(event.event);
+    const normalizedEventName: string = HiAgentEventHelper.normalizeEventName(event.event);
     if (event.conversationId.length > 0) {
       this.serviceConversationId = event.conversationId;
     }
@@ -972,8 +972,8 @@ struct Index {
       nextMessage.rawContent = this.mergeStreamAnswer(nextMessage.rawContent, event.answer, normalizedEventName === 'message_replace');
     }
 
-    if (this.isErrorEvent(normalizedEventName, event.status)) {
-      this.failAssistantMessage(localMessageId, this.extractEventErrorMessage(event));
+    if (HiAgentEventHelper.isErrorEvent(normalizedEventName, event.status)) {
+      this.failAssistantMessage(localMessageId, HiAgentEventHelper.extractEventErrorMessage(event));
       return;
     }
 
@@ -1117,7 +1117,7 @@ struct Index {
   }
 
   private resolveStreamPhase(message: ChatMessage, event: HiAgentStreamEvent, eventName: string): ChatMessagePhase {
-    if (this.isStoppedEvent(eventName)) {
+    if (HiAgentEventHelper.isStoppedEvent(eventName)) {
       return ChatMessagePhase.Stopped;
     }
     if (this.isTerminalEvent(eventName, event.status)) {
@@ -1126,10 +1126,10 @@ struct Index {
     if (this.isAnsweringEvent(eventName, event)) {
       return ChatMessagePhase.Answering;
     }
-    if (this.isThinkingEvent(eventName, event.status, event.thought)) {
+    if (HiAgentEventHelper.isThinkingEvent(eventName, event.status, event.thought)) {
       return ChatMessagePhase.Thinking;
     }
-    if (this.isProgressOnlyEvent(eventName)) {
+    if (HiAgentEventHelper.isProgressOnlyEvent(eventName)) {
       return message.streamPhase;
     }
     if (message.rawContent.trim().length > 0) {
@@ -1140,7 +1140,7 @@ struct Index {
 
   private resolvePhaseLabel(phase: ChatMessagePhase, event: HiAgentStreamEvent, eventName: string,
     currentLabel: string): string {
-    const eventLabel: string = this.resolveEventLabel(eventName, phase, event);
+    const eventLabel: string = HiAgentEventHelper.resolveEventLabel(eventName, phase, event);
     if (eventLabel.length > 0) {
       return eventLabel;
     }
@@ -1194,10 +1194,6 @@ struct Index {
     return this.statusText;
   }
 
-  private normalizeStreamEventName(eventName: string): string {
-    return eventName.trim().toLowerCase();
-  }
-
   private shouldAppendAnswer(eventName: string, event: HiAgentStreamEvent): boolean {
     const normalizedAnswer: string = this.normalizeStreamText(event.answer);
     if (normalizedAnswer.length === 0) {
@@ -1232,168 +1228,11 @@ struct Index {
       normalizedStatus === 'done';
   }
 
-  private isThinkingEvent(eventName: string, status: string, thought: string): boolean {
-    const normalizedStatus: string = status.trim().toLowerCase();
-    if (thought.trim().length > 0) {
-      return true;
-    }
-    return eventName === 'message_start' ||
-      eventName === 'flow_start' ||
-      eventName === 'agent_thought' ||
-      eventName === 'agent_thought_end' ||
-      eventName === 'think_message_output_start' ||
-      eventName === 'think_message' ||
-      eventName === 'think_message_output_end' ||
-      eventName === 'knowledge_retrieve' ||
-      eventName === 'knowledge_retrieve_end' ||
-      eventName === 'qa_retrieve' ||
-      eventName === 'qa_retrieve_end' ||
-      eventName === 'knowledge_graph_retrieve' ||
-      eventName === 'knowledge_graph_retrieve_end' ||
-      eventName === 'terminology_retrieve' ||
-      eventName === 'terminology_retrieve_end' ||
-      eventName === 'tool_message' ||
-      eventName === 'agent_jump' ||
-      eventName === 'agent_take_over' ||
-      eventName === 'intention' ||
-      eventName === 'thinking' ||
-      eventName === 'thought' ||
-      eventName === 'workflow_started' ||
-      normalizedStatus === 'running' ||
-      normalizedStatus === 'queued';
-  }
-
-  private isErrorEvent(eventName: string, status: string): boolean {
-    const normalizedStatus: string = status.trim().toLowerCase();
-    return eventName === 'error' || eventName === 'message_error' || eventName === 'message_failed' ||
-      normalizedStatus === 'error' ||
-      normalizedStatus === 'failed';
-  }
-
-  private isStoppedEvent(eventName: string): boolean {
-    return eventName === 'interrupted' || eventName === 'stopped';
-  }
-
-  private isProgressOnlyEvent(eventName: string): boolean {
-    return eventName === 'message_cost' || eventName === 'suggestion' || eventName === 'suggestion_cost';
-  }
-
   private resolveServiceMessageId(message: ChatMessage, event: HiAgentStreamEvent, eventName: string): string {
-    if (this.isRootMessageEvent(eventName) && event.messageId.trim().length > 0) {
+    if (HiAgentEventHelper.isRootMessageEvent(eventName) && event.messageId.trim().length > 0) {
       return event.messageId.trim();
     }
     return message.serviceMessageId;
-  }
-
-  private isRootMessageEvent(eventName: string): boolean {
-    return eventName === 'message_start' ||
-      eventName === 'message_end' ||
-      eventName === 'message_failed' ||
-      eventName === 'interrupted';
-  }
-
-  private resolveEventLabel(eventName: string, phase: ChatMessagePhase, event: HiAgentStreamEvent): string {
-    if (eventName === 'message_start') {
-      return '消息开始';
-    }
-    if (eventName === 'message_output_start') {
-      return '开始输出';
-    }
-    if (eventName === 'message') {
-      return '回答中';
-    }
-    if (eventName === 'message_replace') {
-      return '回答修正中';
-    }
-    if (eventName === 'message_output_end') {
-      return '输出结束';
-    }
-    if (eventName === 'message_end') {
-      return '已结束';
-    }
-    if (eventName === 'message_cost') {
-      return '消息消耗统计';
-    }
-    if (eventName === 'suggestion') {
-      return '问题建议中';
-    }
-    if (eventName === 'suggestion_cost') {
-      return '建议消耗统计';
-    }
-    if (eventName === 'agent_thought' || eventName === 'think_message') {
-      return 'AI 正在思考中';
-    }
-    if (eventName === 'agent_thought_end' || eventName === 'think_message_output_end') {
-      return '思考结束';
-    }
-    if (eventName === 'think_message_output_start') {
-      return '思考开始';
-    }
-    if (eventName === 'knowledge_retrieve') {
-      return '知识库检索中';
-    }
-    if (eventName === 'knowledge_retrieve_end') {
-      return '知识库检索结束';
-    }
-    if (eventName === 'qa_retrieve') {
-      return '问答库检索中';
-    }
-    if (eventName === 'qa_retrieve_end') {
-      return '问答库检索结束';
-    }
-    if (eventName === 'knowledge_graph_retrieve') {
-      return '图谱库检索中';
-    }
-    if (eventName === 'knowledge_graph_retrieve_end') {
-      return '图谱库检索结束';
-    }
-    if (eventName === 'terminology_retrieve') {
-      return '术语库检索中';
-    }
-    if (eventName === 'terminology_retrieve_end') {
-      return '术语库检索结束';
-    }
-    if (eventName === 'agent_jump') {
-      return 'Agent 跳转中';
-    }
-    if (eventName === 'agent_take_over') {
-      return 'Agent 接管回答';
-    }
-    if (eventName === 'intention') {
-      return '意图识别中';
-    }
-    if (eventName === 'tool_message') {
-      return '工具处理中';
-    }
-    if (eventName === 'flow_start') {
-      return '流程开始';
-    }
-    if (eventName === 'flow_end') {
-      return '流程结束';
-    }
-    if (eventName === 'message_failed') {
-      return '消息失败';
-    }
-    if (eventName === 'interrupted') {
-      return '已停止';
-    }
-    if (phase === ChatMessagePhase.Finished) {
-      return '已结束';
-    }
-    return '';
-  }
-
-  private extractEventErrorMessage(event: HiAgentStreamEvent): string {
-    if (event.errorMessage.trim().length > 0) {
-      return event.errorMessage.trim();
-    }
-    if (event.detailMessage.trim().length > 0) {
-      return event.detailMessage.trim();
-    }
-    if (event.rawData.trim().length > 0) {
-      return event.rawData.trim();
-    }
-    return '流式接口返回异常。';
   }
 
   private buildConfig(): HiAgentConfig {
