@@ -1,12 +1,12 @@
-import { ChatBubble } from '../components/ChatBubble';
-import { ChatBubbleActionDispatcher, ChatBubbleActionType } from '../components/ChatBubbleActionDispatcher';
+import { ChatBubble } from './components/ChatBubble';
+import { ChatBubbleActionDispatcher, ChatBubbleActionType } from './components/ChatBubbleActionDispatcher';
 import pasteboard from '@ohos.pasteboard';
 import promptAction from '@ohos.promptAction';
 import preferences from '@ohos.data.preferences';
 import textToSpeech from '@hms.ai.textToSpeech';
-import { ChatAnswerVariant, ChatMessage, ChatMessagePhase, MessageFeedback, MessageRole } from '../models/ChatModels';
-import { HiAgentConfig, HiAgentHistoryMessage, HiAgentMessageAnswerInfo, HiAgentStreamEvent } from '../models/HiAgentModels';
-import { HiAgentService, HiAgentStreamSession } from '../services/HiAgentService';
+import { ChatAnswerVariant, ChatMessage, ChatMessagePhase, MessageFeedback, MessageRole } from './models/ChatModels';
+import { HiAgentConfig, HiAgentHistoryMessage, HiAgentMessageAnswerInfo, HiAgentStreamEvent } from './models/HiAgentModels';
+import { HiAgentService, HiAgentStreamSession } from './services/HiAgentService';
 
 @Entry
 @Component
