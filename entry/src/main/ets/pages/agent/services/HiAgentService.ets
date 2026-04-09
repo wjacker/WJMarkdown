@@ -2,6 +2,7 @@ import http from '@ohos.net.http';
 import util from '@ohos.util';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import {
+  HiAgentAppConfigPreview,
   HiAgentChatQueryRequest,
   HiAgentConfig,
   HiAgentConversation,
@@ -9,6 +10,7 @@ import {
   HiAgentDeleteConversationRequest,
   HiAgentDeleteMessageRequest,
   HiAgentFeedbackRequest,
+  HiAgentGetAppConfigPreviewRequest,
   HiAgentGetConversationListRequest,
   HiAgentGetConversationMessagesRequest,
   HiAgentHistoryMessage,
@@ -91,6 +93,21 @@ export class HiAgentService {
       HiAgentService.readBoolean(conversationObject, 'EmptyConversation'),
       HiAgentService.readNumber(conversationObject, 'CreateTimestamp'),
       HiAgentService.readBoolean(conversationObject, 'IsPinned')
+    );
+  }
+
+  static async getAppConfigPreview(config: HiAgentConfig): Promise<HiAgentAppConfigPreview> {
+    const payload: ESObject = await HiAgentService.requestJson(
+      config,
+      '/get_app_config_preview',
+      new HiAgentGetAppConfigPreviewRequest(config.resolvedAppKey(), config.userId)
+    );
+
+    return new HiAgentAppConfigPreview(
+      HiAgentService.readString(payload, 'Name'),
+      HiAgentService.readString(payload, 'Image'),
+      HiAgentService.readString(payload, 'OpenMessage'),
+      HiAgentService.readStringArray(payload, 'OpenQuery')
     );
   }
 
@@ -515,6 +532,24 @@ export class HiAgentService {
     for (let index: number = 0; index < value.length; index++) {
       if (typeof value[index] === 'object' && value[index] !== null) {
         results.push(value[index] as ESObject);
+      }
+    }
+    return results;
+  }
+
+  private static readStringArray(source: ESObject, key: string): Array<string> {
+    const value: Object = source[key];
+    if (!(value instanceof Array)) {
+      return [];
+    }
+
+    const results: Array<string> = [];
+    for (let index: number = 0; index < value.length; index++) {
+      if (typeof value[index] === 'string') {
+        const item: string = (value[index] as string).trim();
+        if (item.length > 0) {
+          results.push(item);
+        }
       }
     }
     return results;

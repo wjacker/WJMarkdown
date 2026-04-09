@@ -54,7 +54,31 @@ export class HiAgentConversation {
   }
 }
 
+export class HiAgentAppConfigPreview {
+  name: string;
+  image: string;
+  openMessage: string;
+  openQuery: Array<string>;
+
+  constructor(name: string = '', image: string = '', openMessage: string = '', openQuery: Array<string> = []) {
+    this.name = name;
+    this.image = image;
+    this.openMessage = openMessage;
+    this.openQuery = openQuery;
+  }
+}
+
 export class HiAgentCreateConversationRequest {
+  AppKey: string;
+  UserID: string;
+
+  constructor(appKey: string, userId: string) {
+    this.AppKey = appKey;
+    this.UserID = userId;
+  }
+}
+
+export class HiAgentGetAppConfigPreviewRequest {
   AppKey: string;
   UserID: string;
 

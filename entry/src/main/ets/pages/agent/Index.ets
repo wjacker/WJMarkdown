@@ -1,4 +1,6 @@
 import { ChatBubble } from './components/ChatBubble';
+import { AgentPreviewCard } from './components/AgentPreviewCard';
+import { AgentPreviewActionDispatcher, AgentPreviewActionType } from './components/AgentPreviewActionDispatcher';
 import { ChatBubbleActionDispatcher, ChatBubbleActionType } from './components/ChatBubbleActionDispatcher';
 import { ConversationDrawer, ConversationDrawerHelper } from './components/ConversationDrawer';
 import { ConversationDrawerActionDispatcher, ConversationDrawerActionType } from './components/ConversationDrawerActionDispatcher';
@@ -8,7 +10,7 @@ import preferences from '@ohos.data.preferences';
 import textToSpeech from '@hms.ai.textToSpeech';
 import { ChatAnswerVariant, ChatMessage, ChatMessagePhase, MessageFeedback, MessageRole } from './models/ChatModels';
 import { AgentConversationHelper, AgentConversationItem } from './models/ConversationModels';
-import { HiAgentConfig, HiAgentConversation, HiAgentEventHelper, HiAgentHistoryMessage, HiAgentMessageAnswerInfo, HiAgentStreamEvent } from './models/HiAgentModels';
+import { HiAgentAppConfigPreview, HiAgentConfig, HiAgentConversation, HiAgentEventHelper, HiAgentHistoryMessage, HiAgentMessageAnswerInfo, HiAgentStreamEvent } from './models/HiAgentModels';
 import { AgentConfigStore, AgentStoredConfig } from './services/AgentConfigStore';
 import { HiAgentService, HiAgentStreamSession } from './services/HiAgentService';
 import { AgentTextUtils } from './utils/AgentTextUtils';
@@ -29,6 +31,7 @@ struct Index {
   @State private speakingMessageId: string = '';
   @State private shouldAutoScrollToBottom: boolean = true;
   @State private conversationItems: Array<AgentConversationItem> = [];
+  @State private appConfigPreview: HiAgentAppConfigPreview = new HiAgentAppConfigPreview();
   @State private isConversationDrawerVisible: boolean = false;
   @State private activeConversationMenuId: string = '';
   @State private activeConversationMenuTop: number = 88;
@@ -58,6 +61,9 @@ struct Index {
       payload: string) => {
       this.handleConversationDrawerAction(action, conversationId, payload);
     });
+    AgentPreviewActionDispatcher.register((action: AgentPreviewActionType, payload: string) => {
+      this.handleAgentPreviewAction(action, payload);
+    });
     this.resetConversation();
     this.restoreSavedConfig();
   }
@@ -65,6 +71,7 @@ struct Index {
   aboutToDisappear(): void {
     ChatBubbleActionDispatcher.clear();
     ConversationDrawerActionDispatcher.clear();
+    AgentPreviewActionDispatcher.clear();
     this.flushConfigIfNeeded();
     this.stopRevealTimer();
     this.closeActiveSession();
@@ -78,6 +85,15 @@ struct Index {
         this.ConfigBuilder();
 
         List({ space: 22, scroller: this.messageScroller }) {
+          if (this.shouldShowAgentPreviewCard()) {
+            ListItem() {
+              AgentPreviewCard({
+                preview: this.appConfigPreview
+              })
+              .padding({ top: 2, bottom: 6 })
+            }
+          }
+
           ForEach(this.messages, (message: ChatMessage) => {
             ListItem() {
               ChatBubble({
@@ -128,53 +144,60 @@ struct Index {
 
   @Builder
   private HeaderBuilder() {
-    Column({ space: 16 }) {
-      Row({ space: 12 }) {
-        Button() {
-          Image($r('app.media.icon_ai_more'))
-            .width(18)
-            .height(18)
-            .fillColor('#0F3D91')
-        }
-        .width(38)
-        .height(38)
-        .backgroundColor('#FFFFFF')
-        .borderRadius(19)
-        .onClick(() => {
-          this.isConversationDrawerVisible = true;
-          this.activeConversationMenuId = '';
-        })
+    Stack({ alignContent: Alignment.TopStart }) {
+      Image($r('app.media.img_ai_header_bg'))
+        .width('100%')
+        .height('100%')
+        .objectFit(ImageFit.Cover)
 
-        Column({ space: 6 }) {
-          Text('HiAgent Markdown Chat')
-            .fontSize(24)
-            .fontWeight(FontWeight.Bold)
-            .fontColor('#0F172A')
-
-          Text('HarmonyOS SSE chat demo with real HiAgent streaming markdown rendering.')
-            .fontSize(13)
-            .fontColor('#526174')
-        }
-        .alignItems(HorizontalAlign.Start)
-
-        Blank()
-
-        Button('New chat')
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#0F3D91')
-          .backgroundColor('#DBEAFE')
-          .borderRadius(18)
-          .padding({ left: 14, right: 14 })
+      Column({ space: 16 }) {
+        Row({ space: 12 }) {
+          Button() {
+            Image($r('app.media.icon_ai_more'))
+              .width(18)
+              .height(18)
+              .fillColor('#0F3D91')
+          }
+          .width(38)
+          .height(38)
+          .backgroundColor('#FFFFFF')
+          .borderRadius(19)
           .onClick(() => {
-            void this.startNewConversation();
+            this.isConversationDrawerVisible = true;
+            this.activeConversationMenuId = '';
           })
+
+          Column({ space: 6 }) {
+            Text('HiAgent Markdown Chat')
+              .fontSize(24)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#0F172A')
+
+            Text('HarmonyOS SSE chat demo with real HiAgent streaming markdown rendering.')
+              .fontSize(13)
+              .fontColor('#526174')
+          }
+          .alignItems(HorizontalAlign.Start)
+
+          Blank()
+
+          Button('New chat')
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#0F3D91')
+            .backgroundColor('#DBEAFE')
+            .borderRadius(18)
+            .padding({ left: 14, right: 14 })
+            .onClick(() => {
+              void this.startNewConversation();
+            })
+        }
+        .width('100%')
       }
-      .width('100%')
     }
     .width('100%')
     .padding({ top: 18, right: 16, bottom: 12, left: 16 })
-    .backgroundColor('#FFF7ED')
+    .height(112)
   }
 
   @Builder
@@ -490,6 +513,7 @@ struct Index {
       this.conversationId = storedConfig.conversationId;
       this.isConfigExpanded = storedConfig.isConfigExpanded;
       if (this.buildConfig().isReady()) {
+        void this.refreshAppConfigPreview(false);
         void this.refreshConversationList(false);
       }
       if (this.buildConfig().isReady() && this.conversationId.trim().length > 0) {
@@ -501,6 +525,29 @@ struct Index {
     } catch (_error) {
       this.statusText = '配置读取失败，请重新填写接口参数。';
     }
+  }
+
+  private shouldShowAgentPreviewCard(): boolean {
+    return this.appConfigPreview.name.trim().length > 0 ||
+      this.appConfigPreview.image.trim().length > 0 ||
+      this.appConfigPreview.openMessage.trim().length > 0 ||
+      this.appConfigPreview.openQuery.length > 0;
+  }
+
+  private handleAgentPreviewAction(action: AgentPreviewActionType, payload: string): void {
+    if (action !== AgentPreviewActionType.SelectQuery) {
+      return;
+    }
+    const query: string = payload.trim();
+    if (query.length === 0) {
+      return;
+    }
+    if (this.isSending) {
+      this.draft = query;
+      return;
+    }
+    this.draft = query;
+    void this.sendPrompt();
   }
 
   private toggleConfigPanel(): void {
@@ -550,6 +597,22 @@ struct Index {
 
   private persistConversationList(): void {
     this.scheduleConfigSave();
+  }
+
+  private async refreshAppConfigPreview(showErrorToast: boolean = true): Promise<void> {
+    const config: HiAgentConfig = this.buildConfig();
+    if (!config.isReady()) {
+      this.appConfigPreview = new HiAgentAppConfigPreview();
+      return;
+    }
+
+    try {
+      this.appConfigPreview = await HiAgentService.getAppConfigPreview(config);
+    } catch (error) {
+      if (showErrorToast) {
+        this.showToast(`智能体预览获取失败：${this.stringifyError(error)}`);
+      }
+    }
   }
 
   private async refreshConversationList(showErrorToast: boolean = true): Promise<void> {
@@ -1877,12 +1940,6 @@ struct Index {
       return;
     }
 
-    const config: HiAgentConfig = this.buildConfig();
-    if (!config.isReady()) {
-      this.showToast('请先填写接口配置');
-      return;
-    }
-
     const hydratedMessage: ChatMessage = this.messages[messageIndex].copy();
     const variants: Array<ChatAnswerVariant> = this.cloneAnswerVariants(messageId);
     if (variants.length <= 1) {
@@ -1895,28 +1952,12 @@ struct Index {
       return;
     }
 
-    const targetVariant: ChatAnswerVariant = variants[nextIndex];
-    if (targetVariant.serviceMessageId.trim().length === 0) {
-      this.showToast('当前回复版本还没有有效的 messageId');
-      return;
-    }
-
     const optimisticMessage: ChatMessage = hydratedMessage.copy();
     optimisticMessage.activeAnswerVersionIndex = nextIndex;
     optimisticMessage.answerVersionCount = variants.length;
     this.applyActiveVariantToMessage(optimisticMessage);
     this.applyMessageToList(messageIndex, optimisticMessage);
-
-    try {
-      await HiAgentService.setMessageAnswerUsed(config, targetVariant.serviceMessageId);
-      this.statusText = `已切换到第 ${nextIndex + 1}/${variants.length} 个回复。`;
-    } catch (error) {
-      const rollbackMessage: ChatMessage = hydratedMessage.copy();
-      rollbackMessage.answerVersionCount = variants.length;
-      this.applyMessageToList(messageIndex, rollbackMessage);
-      this.statusText = `切换回复失败：${this.stringifyError(error)}`;
-      this.showToast('切换回复失败');
-    }
+    this.statusText = `已切换到第 ${nextIndex + 1}/${variants.length} 个回复。`;
   }
 
   private buildVariantFromAnswerInfo(answerInfo: HiAgentMessageAnswerInfo): ChatAnswerVariant {
