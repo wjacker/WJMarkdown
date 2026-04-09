@@ -63,6 +63,7 @@ export class ChatAnswerVariant {
   }
 }
 
+@Observed
 export class ChatMessage {
   id: string;
   role: MessageRole;
@@ -81,6 +82,7 @@ export class ChatMessage {
   feedback: MessageFeedback;
   answerVersionCount: number;
   activeAnswerVersionIndex: number;
+  showActions: boolean;
 
   constructor(
     id: string,
@@ -107,6 +109,7 @@ export class ChatMessage {
     this.feedback = MessageFeedback.None;
     this.answerVersionCount = 0;
     this.activeAnswerVersionIndex = 0;
+    this.showActions = false;
   }
 
   static user(id: string, content: string): ChatMessage {
@@ -144,6 +147,7 @@ export class ChatMessage {
     nextMessage.feedback = this.feedback;
     nextMessage.answerVersionCount = this.answerVersionCount;
     nextMessage.activeAnswerVersionIndex = this.activeAnswerVersionIndex;
+    nextMessage.showActions = this.showActions;
     return nextMessage;
   }
 }

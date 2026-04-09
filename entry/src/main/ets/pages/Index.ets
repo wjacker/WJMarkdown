@@ -5,7 +5,7 @@ import promptAction from '@ohos.promptAction';
 import preferences from '@ohos.data.preferences';
 import textToSpeech from '@hms.ai.textToSpeech';
 import { ChatAnswerVariant, ChatMessage, ChatMessagePhase, MessageFeedback, MessageRole } from '../models/ChatModels';
-import { HiAgentConfig, HiAgentHistoryMessage, HiAgentMessageAnswerInfo, HiAgentMessageInfo, HiAgentStreamEvent } from '../models/HiAgentModels';
+import { HiAgentConfig, HiAgentHistoryMessage, HiAgentMessageAnswerInfo, HiAgentStreamEvent } from '../models/HiAgentModels';
 import { HiAgentService, HiAgentStreamSession } from '../services/HiAgentService';
 
 @Entry
@@ -68,23 +68,12 @@ struct Index {
         ForEach(this.messages, (message: ChatMessage) => {
           ListItem() {
             ChatBubble({
-              messageId: message.id,
-              role: message.role,
-              content: message.visibleContent,
-              isStreaming: message.isStreaming,
-              statusLabel: message.statusLabel,
-              streamPhase: message.streamPhase,
-              feedback: message.feedback,
-              answerVersionCount: this.resolveAnswerVersionCount(message),
-              activeAnswerVersionIndex: message.activeAnswerVersionIndex,
+              message: message,
               isSpeaking: this.speakingMessageId === message.id,
-              showActions: this.shouldShowAssistantActions(message),
-              contentRenderToken: this.buildContentRenderToken(message),
-              actionRenderToken: this.buildActionRenderToken(message)
             })
             .padding({ top: 2, bottom: 6 })
           }
-        }, (message: ChatMessage) => `${message.id}-${this.buildContentRenderToken(message)}`)
+        }, (message: ChatMessage) => message.id)
       }
       .width('100%')
       .layoutWeight(1)
@@ -318,23 +307,6 @@ struct Index {
     return message.answerVersionCount;
   }
 
-  private shouldShowAssistantActions(message: ChatMessage): boolean {
-    return message.role === MessageRole.Assistant &&
-      message.visibleContent.trim().length > 0 &&
-      !message.isStreaming &&
-      message.serviceMessageId.trim().length > 0;
-  }
-
-  private buildContentRenderToken(message: ChatMessage): string {
-    return `${message.visibleContent.length}-${message.isStreaming}-${message.streamPhase}-${message.statusLabel}` +
-      `-${message.serviceMessageId}-${message.activeAnswerVersionIndex}`;
-  }
-
-  private buildActionRenderToken(message: ChatMessage): string {
-    return `${message.feedback}-${message.activeAnswerVersionIndex}-${this.resolveAnswerVersionCount(message)}` +
-      `-${this.speakingMessageId === message.id}-${message.isStreaming}-${message.serviceMessageId}`;
-  }
-
   private handleChatBubbleAction(messageId: string, action: ChatBubbleActionType): void {
     if (action === ChatBubbleActionType.Copy) {
       void this.copyMessageText(messageId);
@@ -489,12 +461,14 @@ struct Index {
     const nextMessages: Array<ChatMessage> = this.messages.slice();
     const userMessage: ChatMessage = ChatMessage.user(this.createMessageId('user'), prompt);
     userMessage.conversationId = this.conversationId;
+    this.syncMessageUiState(userMessage);
     nextMessages.push(userMessage);
     const assistantMessageId: string = this.createMessageId('assistant');
     const assistantMessage: ChatMessage = ChatMessage.assistant(assistantMessageId, '', '', true);
     assistantMessage.conversationId = this.conversationId;
     assistantMessage.streamCompleted = false;
     this.applyMessagePhase(assistantMessage, ChatMessagePhase.Sending, '发送中');
+    this.syncMessageUiState(assistantMessage);
     const initialVariants: Array<ChatAnswerVariant> = [this.createAnswerVariantFromMessage(assistantMessage)];
     this.replaceAnswerVariants(assistantMessage.id, initialVariants);
     this.applyAnswerVariantMeta(assistantMessage, initialVariants);
@@ -769,6 +743,35 @@ struct Index {
     this.answerVariantsByMessageId.set(messageId, variants);
   }
 
+  private syncMessageUiState(message: ChatMessage): void {
+    if (message.role !== MessageRole.Assistant) {
+      message.showActions = false;
+      return;
+    }
+
+    message.showActions = message.visibleContent.trim().length > 0 && !message.isStreaming;
+  }
+
+  private patchMessage(target: ChatMessage, source: ChatMessage): void {
+    target.role = source.role;
+    target.rawContent = source.rawContent;
+    target.visibleContent = source.visibleContent;
+    target.isStreaming = source.isStreaming;
+    target.streamCompleted = source.streamCompleted;
+    target.streamPhase = source.streamPhase;
+    target.statusLabel = source.statusLabel;
+    target.lastEvent = source.lastEvent;
+    target.conversationId = source.conversationId;
+    target.queryId = source.queryId;
+    target.serviceMessageId = source.serviceMessageId;
+    target.taskId = source.taskId;
+    target.createdAt = source.createdAt;
+    target.feedback = source.feedback;
+    target.answerVersionCount = source.answerVersionCount;
+    target.activeAnswerVersionIndex = source.activeAnswerVersionIndex;
+    target.showActions = source.showActions;
+  }
+
   private getActiveAnswerVariant(message: ChatMessage): ChatAnswerVariant | null {
     const variants: Array<ChatAnswerVariant> = this.ensureAnswerVariants(message);
     if (variants.length === 0) {
@@ -789,32 +792,6 @@ struct Index {
     return nextVariants;
   }
 
-  private buildOrderedVariantsFromMessageInfo(messageInfo: HiAgentMessageInfo): Array<ChatAnswerVariant> {
-    const historyVariants: Array<ChatAnswerVariant> = [];
-    for (let index: number = 0; index < messageInfo.otherAnswers.length; index++) {
-      historyVariants.push(this.buildVariantFromAnswerInfo(messageInfo.otherAnswers[index]));
-    }
-    historyVariants.sort((left: ChatAnswerVariant, right: ChatAnswerVariant) => left.createdAt - right.createdAt);
-
-    const currentVariant: ChatAnswerVariant = this.buildVariantFromAnswerInfo(messageInfo.answerInfo);
-    historyVariants.push(currentVariant);
-    return historyVariants;
-  }
-
-  private findVariantIndexByServiceMessageId(variants: Array<ChatAnswerVariant>, serviceMessageId: string): number {
-    const normalizedMessageId: string = serviceMessageId.trim();
-    if (normalizedMessageId.length === 0) {
-      return -1;
-    }
-
-    for (let index: number = 0; index < variants.length; index++) {
-      if (variants[index].serviceMessageId.trim() === normalizedMessageId) {
-        return index;
-      }
-    }
-    return -1;
-  }
-
   private buildVariantMergeKey(variant: ChatAnswerVariant): string {
     if (variant.serviceMessageId.trim().length > 0) {
       return `id:${variant.serviceMessageId.trim()}`;
@@ -824,42 +801,6 @@ struct Index {
       return `raw:${rawKey}`;
     }
     return `local:${variant.id}`;
-  }
-
-  private mergeLocalHistoryVariants(messageId: string, fetchedVariants: Array<ChatAnswerVariant>): Array<ChatAnswerVariant> {
-    if (fetchedVariants.length === 0) {
-      return this.cloneAnswerVariants(messageId);
-    }
-
-    const mergedHistory: Array<ChatAnswerVariant> = [];
-    const mergedKeys: Set<string> = new Set<string>();
-    const fetchedCurrent: ChatAnswerVariant = fetchedVariants[fetchedVariants.length - 1];
-    const fetchedCurrentKey: string = this.buildVariantMergeKey(fetchedCurrent);
-
-    const pushHistoryVariant = (variant: ChatAnswerVariant): void => {
-      if (variant.rawContent.trim().length === 0 && variant.visibleContent.trim().length === 0) {
-        return;
-      }
-      const variantKey: string = this.buildVariantMergeKey(variant);
-      if (variantKey === fetchedCurrentKey || mergedKeys.has(variantKey)) {
-        return;
-      }
-      mergedKeys.add(variantKey);
-      mergedHistory.push(variant);
-    };
-
-    const localVariants: Array<ChatAnswerVariant> = this.cloneAnswerVariants(messageId);
-    for (let index: number = 0; index < localVariants.length; index++) {
-      pushHistoryVariant(localVariants[index]);
-    }
-
-    for (let index: number = 0; index < fetchedVariants.length - 1; index++) {
-      pushHistoryVariant(fetchedVariants[index]);
-    }
-
-    mergedHistory.sort((left: ChatAnswerVariant, right: ChatAnswerVariant) => left.createdAt - right.createdAt);
-    mergedHistory.push(fetchedCurrent);
-    return mergedHistory;
   }
 
   private buildPendingQueryAgainVariant(localMessageId: string): ChatAnswerVariant {
@@ -873,28 +814,11 @@ struct Index {
     return pendingVariant;
   }
 
-  private resolveRefreshLookupMessageId(message: ChatMessage, fallbackMessageId: string = ''): string {
-    if (message.serviceMessageId.trim().length > 0) {
-      return message.serviceMessageId.trim();
-    }
-
-    const variants: Array<ChatAnswerVariant> | undefined = this.answerVariantsByMessageId.get(message.id);
-    if (variants !== undefined) {
-      for (let index: number = variants.length - 1; index >= 0; index--) {
-        if (variants[index].serviceMessageId.trim().length > 0) {
-          return variants[index].serviceMessageId.trim();
-        }
-      }
-    }
-
-    return fallbackMessageId.trim();
-  }
-
   private applyMessageToList(messageIndex: number, nextMessage: ChatMessage): void {
     this.syncMessageToActiveVariant(nextMessage);
-    const nextMessages: Array<ChatMessage> = this.messages.slice();
-    nextMessages[messageIndex] = nextMessage;
-    this.messages = nextMessages;
+    this.syncMessageUiState(nextMessage);
+    this.patchMessage(this.messages[messageIndex], nextMessage);
+    this.messages = this.messages.slice();
   }
 
   private findPairedUserMessageIndex(assistantMessageIndex: number): number {
@@ -939,6 +863,7 @@ struct Index {
       false
     );
     guideMessage.streamCompleted = true;
+    this.syncMessageUiState(guideMessage);
     return [guideMessage];
   }
 
@@ -954,6 +879,7 @@ struct Index {
         const userMessage: ChatMessage = ChatMessage.user(this.createMessageId(`history-user-${index}`), historyMessage.query);
         userMessage.conversationId = this.conversationId;
         userMessage.createdAt = historyMessage.createdTime * 1000;
+        this.syncMessageUiState(userMessage);
         nextMessages.push(userMessage);
       }
 
@@ -976,6 +902,7 @@ struct Index {
         assistantMessage.answerVersionCount = variants.length;
         assistantMessage.activeAnswerVersionIndex = variants.length > 0 ? variants.length - 1 : 0;
         this.applyActiveVariantToMessage(assistantMessage);
+        this.syncMessageUiState(assistantMessage);
         nextMessages.push(assistantMessage);
       }
     }
@@ -1024,9 +951,9 @@ struct Index {
     const nextMessage: ChatMessage = this.messages[messageIndex].copy();
     const normalizedEventName: string = this.normalizeStreamEventName(event.event);
     if (event.conversationId.length > 0) {
-      nextMessage.conversationId = event.conversationId;
       this.serviceConversationId = event.conversationId;
-    } else if (nextMessage.conversationId.length === 0 && this.conversationId.length > 0) {
+    }
+    if (nextMessage.conversationId.length === 0 && this.conversationId.length > 0) {
       nextMessage.conversationId = this.conversationId;
     }
     if (event.taskId.length > 0) {
@@ -1057,7 +984,12 @@ struct Index {
       nextMessage.rawContent = '已停止本次生成。';
     }
     nextMessage.streamCompleted = phase === ChatMessagePhase.Finished || phase === ChatMessagePhase.Stopped;
-    nextMessage.isStreaming = !nextMessage.streamCompleted || nextMessage.visibleContent.length < nextMessage.rawContent.length;
+    if (nextMessage.streamCompleted) {
+      nextMessage.visibleContent = nextMessage.rawContent;
+      nextMessage.isStreaming = false;
+    } else {
+      nextMessage.isStreaming = nextMessage.visibleContent.length < nextMessage.rawContent.length;
+    }
 
     this.applyMessageToList(messageIndex, nextMessage);
     this.statusText = this.resolveStatusTextByPhase(phase, phaseLabel);
@@ -1065,7 +997,6 @@ struct Index {
 
     if (phase === ChatMessagePhase.Finished || phase === ChatMessagePhase.Stopped) {
       this.finishSending(this.resolveStatusTextByPhase(phase, phaseLabel));
-      void this.refreshMessageVariants(localMessageId, nextMessage.serviceMessageId);
     }
   }
 
@@ -1075,12 +1006,9 @@ struct Index {
       const nextMessage: ChatMessage = this.messages[messageIndex].copy();
       this.applyMessagePhase(nextMessage, ChatMessagePhase.Finished, '已结束', nextMessage.lastEvent);
       nextMessage.streamCompleted = true;
-      if (nextMessage.visibleContent.length >= nextMessage.rawContent.length) {
-        nextMessage.isStreaming = false;
-      }
+      nextMessage.visibleContent = nextMessage.rawContent;
+      nextMessage.isStreaming = false;
       this.applyMessageToList(messageIndex, nextMessage);
-      const lookupMessageId: string = this.resolveRefreshLookupMessageId(nextMessage, fallbackLookupMessageId);
-      void this.refreshMessageVariants(localMessageId, lookupMessageId);
     }
     this.finishSending(statusText);
   }
@@ -1351,9 +1279,6 @@ struct Index {
   }
 
   private resolveServiceMessageId(message: ChatMessage, event: HiAgentStreamEvent, eventName: string): string {
-    if (event.taskId.trim().length > 0) {
-      return event.taskId.trim();
-    }
     if (this.isRootMessageEvent(eventName) && event.messageId.trim().length > 0) {
       return event.messageId.trim();
     }
@@ -1641,6 +1566,7 @@ struct Index {
     sourceMessage.visibleContent = '';
     sourceMessage.feedback = MessageFeedback.None;
     sourceMessage.createdAt = pendingVariant.createdAt;
+    this.syncMessageUiState(sourceMessage);
     const nextMessages: Array<ChatMessage> = this.messages.slice();
     nextMessages.splice(messageIndex, 1);
     if (pairedUserMessageIndex >= 0) {
@@ -1648,6 +1574,7 @@ struct Index {
     }
     if (pairedUserMessage !== null) {
       pairedUserMessage.id = this.createMessageId('user');
+      this.syncMessageUiState(pairedUserMessage);
       nextMessages.push(pairedUserMessage);
     }
     nextMessages.push(sourceMessage);
@@ -1780,11 +1707,7 @@ struct Index {
       return;
     }
 
-    const hydratedMessage: ChatMessage | null = await this.ensureMessageInfoLoaded(messageId);
-    if (hydratedMessage === null) {
-      return;
-    }
-
+    const hydratedMessage: ChatMessage = this.messages[messageIndex].copy();
     const variants: Array<ChatAnswerVariant> = this.cloneAnswerVariants(messageId);
     if (variants.length <= 1) {
       this.showToast('当前只有一个回复版本');
@@ -1817,68 +1740,6 @@ struct Index {
       this.applyMessageToList(messageIndex, rollbackMessage);
       this.statusText = `切换回复失败：${this.stringifyError(error)}`;
       this.showToast('切换回复失败');
-    }
-  }
-
-  private async ensureMessageInfoLoaded(messageId: string): Promise<ChatMessage | null> {
-    const messageIndex: number = this.findMessageIndex(messageId);
-    if (messageIndex < 0) {
-      return null;
-    }
-
-    const message: ChatMessage = this.messages[messageIndex].copy();
-    if (message.queryId.trim().length > 0 && message.answerVersionCount > 1) {
-      return message;
-    }
-
-    const activeVariant: ChatAnswerVariant | null = this.getActiveAnswerVariant(message);
-    if (activeVariant === null || activeVariant.serviceMessageId.trim().length === 0) {
-      return message;
-    }
-
-    return await this.refreshMessageVariants(messageId, activeVariant.serviceMessageId);
-  }
-
-  private async refreshMessageVariants(messageId: string, lookupMessageId: string): Promise<ChatMessage | null> {
-    if (lookupMessageId.trim().length === 0) {
-      return this.getMessageById(messageId);
-    }
-
-    const config: HiAgentConfig = this.buildConfig();
-    if (!config.isReady()) {
-      return this.getMessageById(messageId);
-    }
-
-    const messageIndex: number = this.findMessageIndex(messageId);
-    if (messageIndex < 0) {
-      return null;
-    }
-
-    try {
-      const messageInfo: HiAgentMessageInfo = await HiAgentService.getMessageInfo(config, lookupMessageId);
-      const fetchedVariants: Array<ChatAnswerVariant> = this.buildOrderedVariantsFromMessageInfo(messageInfo);
-      const nextVariants: Array<ChatAnswerVariant> = this.mergeLocalHistoryVariants(messageId, fetchedVariants);
-
-      const nextMessage: ChatMessage = this.messages[messageIndex].copy();
-      nextMessage.queryId = messageInfo.queryId;
-      if (nextMessage.conversationId.trim().length === 0 && messageInfo.conversationId.trim().length > 0) {
-        nextMessage.conversationId = messageInfo.conversationId;
-      }
-
-      this.replaceAnswerVariants(messageId, nextVariants);
-      let activeIndex: number = this.findVariantIndexByServiceMessageId(nextVariants, messageInfo.answerInfo.messageId);
-      if (activeIndex < 0) {
-        activeIndex = nextVariants.length > 0 ? nextVariants.length - 1 : 0;
-      }
-      nextMessage.activeAnswerVersionIndex = activeIndex;
-      nextMessage.answerVersionCount = messageInfo.otherAnswers.length + 1;
-      this.applyActiveVariantToMessage(nextMessage);
-      nextMessage.answerVersionCount = nextVariants.length;
-      this.applyMessageToList(messageIndex, nextMessage);
-      return this.messages[messageIndex];
-    } catch (error) {
-      this.statusText = `读取回复详情失败：${this.stringifyError(error)}`;
-      return this.getMessageById(messageId);
     }
   }
 

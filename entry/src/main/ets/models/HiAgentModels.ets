@@ -90,18 +90,6 @@ export class HiAgentGetConversationMessagesRequest {
   }
 }
 
-export class HiAgentGetMessageInfoRequest {
-  AppKey: string;
-  MessageID: string;
-  UserID: string;
-
-  constructor(appKey: string, messageId: string, userId: string) {
-    this.AppKey = appKey;
-    this.MessageID = messageId;
-    this.UserID = userId;
-  }
-}
-
 export class HiAgentStopMessageRequest {
   AppKey: string;
   UserID: string;
@@ -218,28 +206,6 @@ export class HiAgentMessageAnswerInfo {
     this.totalTokens = totalTokens;
     this.latency = latency;
     this.tracingJsonStr = tracingJsonStr;
-  }
-}
-
-export class HiAgentMessageInfo {
-  conversationId: string;
-  queryId: string;
-  query: string;
-  answerInfo: HiAgentMessageAnswerInfo;
-  otherAnswers: Array<HiAgentMessageAnswerInfo>;
-
-  constructor(
-    conversationId: string = '',
-    queryId: string = '',
-    query: string = '',
-    answerInfo: HiAgentMessageAnswerInfo = new HiAgentMessageAnswerInfo(),
-    otherAnswers: Array<HiAgentMessageAnswerInfo> = []
-  ) {
-    this.conversationId = conversationId;
-    this.queryId = queryId;
-    this.query = query;
-    this.answerInfo = answerInfo;
-    this.otherAnswers = otherAnswers;
   }
 }
 

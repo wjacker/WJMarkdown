@@ -10,9 +10,7 @@ import {
   HiAgentFeedbackRequest,
   HiAgentGetConversationMessagesRequest,
   HiAgentHistoryMessage,
-  HiAgentGetMessageInfoRequest,
   HiAgentMessageAnswerInfo,
-  HiAgentMessageInfo,
   HiAgentQueryAgainRequest,
   HiAgentSetMessageAnswerUsedRequest,
   HiAgentStopMessageRequest,
@@ -39,8 +37,8 @@ export class HiAgentStreamSession {
     const normalizedEventName: string = event.event.trim().toLowerCase();
     if (event.taskId.length > 0) {
       this.taskId = event.taskId;
-      this.messageId = event.taskId;
-    } else if (event.messageId.length > 0 && (
+    }
+    if (event.messageId.length > 0 && (
       normalizedEventName === 'message_start' ||
       normalizedEventName === 'message_end' ||
       normalizedEventName === 'message_failed' ||
@@ -134,30 +132,6 @@ export class HiAgentService {
       config,
       '/stop_message',
       new HiAgentStopMessageRequest(config.resolvedAppKey(), config.userId, messageId.trim(), taskId.trim())
-    );
-  }
-
-  static async getMessageInfo(config: HiAgentConfig, messageId: string): Promise<HiAgentMessageInfo> {
-    const payload: ESObject = await HiAgentService.requestJson(
-      config,
-      '/get_message_info',
-      new HiAgentGetMessageInfoRequest(config.resolvedAppKey(), messageId.trim(), config.userId)
-    );
-
-    const messageInfoObject: ESObject = HiAgentService.readObject(payload, 'MessageInfo');
-    const answerInfoObject: ESObject = HiAgentService.readObject(messageInfoObject, 'AnswerInfo');
-    const otherAnswerObjects: Array<ESObject> = HiAgentService.readObjectArray(messageInfoObject, 'OtherAnswers');
-    const otherAnswers: Array<HiAgentMessageAnswerInfo> = [];
-    for (let index: number = 0; index < otherAnswerObjects.length; index++) {
-      otherAnswers.push(HiAgentService.buildMessageAnswerInfo(otherAnswerObjects[index]));
-    }
-
-    return new HiAgentMessageInfo(
-      HiAgentService.readString(messageInfoObject, 'ConversationID'),
-      HiAgentService.readString(messageInfoObject, 'QueryID'),
-      HiAgentService.readString(messageInfoObject, 'Query'),
-      HiAgentService.buildMessageAnswerInfo(answerInfoObject),
-      otherAnswers
     );
   }
 
