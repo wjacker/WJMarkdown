@@ -157,7 +157,7 @@ struct Index {
           .borderRadius(18)
           .padding({ left: 14, right: 14 })
           .onClick(() => {
-            this.startNewConversation();
+            void this.startNewConversation();
           })
       }
       .width('100%')
@@ -201,7 +201,7 @@ struct Index {
               .onClick(() => {
                 this.isConversationDrawerVisible = false;
                 this.activeConversationMenuId = '';
-                this.startNewConversation();
+                void this.startNewConversation();
               })
           }
           .width('100%')
@@ -664,7 +664,7 @@ struct Index {
     }
   }
 
-  private resetConversation(): void {
+  private resetConversation(showGuideMessage: boolean = true): void {
     this.stopRevealTimer();
     this.closeActiveSession();
     this.stopSpeakingMessage(false);
@@ -674,16 +674,37 @@ struct Index {
     this.isSending = false;
     this.shouldAutoScrollToBottom = true;
     this.statusText = '请先填写 HiAgent 的 Api URL、ApiKey 和 UserID。';
-    this.messages = this.buildGuideMessages();
+    this.messages = showGuideMessage ? this.buildGuideMessages() : [];
     this.scrollToBottom(true);
   }
 
-  private startNewConversation(): void {
+  private async startNewConversation(): Promise<void> {
+    if (this.isSending) {
+      this.showToast('当前仍在生成中，请稍后再新建会话');
+      return;
+    }
     this.isConversationDrawerVisible = false;
     this.activeConversationMenuId = '';
     this.isRenameDialogVisible = false;
-    this.resetConversation();
-    this.scheduleConfigSave();
+    this.resetConversation(false);
+    const config: HiAgentConfig = this.buildConfig();
+    if (!config.isReady()) {
+      this.statusText = '请先填写 Api URL、ApiKey 和 UserID。';
+      this.scheduleConfigSave();
+      return;
+    }
+
+    this.statusText = '正在创建新会话...';
+    try {
+      const conversation: HiAgentConversation = await HiAgentService.createConversation(config);
+      this.conversationId = conversation.appConversationId;
+      this.upsertConversationItem(conversation.appConversationId, conversation.conversationName, '', Date.now());
+      void this.refreshConversationList(false);
+      this.statusText = `新会话 ${this.shortenId(conversation.appConversationId)} 已创建。`;
+      this.scheduleConfigSave();
+    } catch (error) {
+      this.statusText = `创建新会话失败：${this.stringifyError(error)}`;
+    }
   }
 
   private restoreSavedConfig(): void {
@@ -1072,6 +1093,9 @@ struct Index {
       return;
     }
 
+    const needsCreateConversation: boolean = this.conversationId.trim().length === 0;
+    const shouldUpdateEmptyConversationTitle: boolean = this.isCurrentConversationEmpty();
+
     const nextMessages: Array<ChatMessage> = this.messages.slice();
     const userMessage: ChatMessage = ChatMessage.user(this.createMessageId('user'), prompt);
     userMessage.conversationId = this.conversationId;
@@ -1097,11 +1121,10 @@ struct Index {
     this.startRevealTimer(assistantMessageId);
 
     try {
-      const shouldUpdateNewConversationTitle: boolean = this.conversationId.trim().length === 0;
       const appConversationId: string = await this.ensureConversation(config);
       const sanitizedPromptTitle: string = this.sanitizeConversationTitle(prompt, true);
       this.upsertConversationItem(appConversationId, sanitizedPromptTitle, prompt, Date.now());
-      if (shouldUpdateNewConversationTitle && sanitizedPromptTitle.length > 0) {
+      if (shouldUpdateEmptyConversationTitle && sanitizedPromptTitle.length > 0) {
         this.pendingConversationTitleByMessageId.set(assistantMessageId, sanitizedPromptTitle);
       } else {
         this.pendingConversationTitleByMessageId.delete(assistantMessageId);
@@ -1125,8 +1148,25 @@ struct Index {
         }
       );
     } catch (error) {
-      this.failAssistantMessage(assistantMessageId, this.stringifyError(error));
+      const errorText: string = this.stringifyError(error);
+      if (needsCreateConversation) {
+        this.failAssistantMessage(assistantMessageId, `创建会话失败：${errorText}`);
+      } else {
+        this.failAssistantMessage(assistantMessageId, errorText);
+      }
     }
+  }
+
+  private isCurrentConversationEmpty(): boolean {
+    for (let index: number = 0; index < this.messages.length; index++) {
+      const message: ChatMessage = this.messages[index];
+      if (message.role === MessageRole.User || message.role === MessageRole.Assistant) {
+        if (message.rawContent.trim().length > 0 || message.visibleContent.trim().length > 0) {
+          return false;
+        }
+      }
+    }
+    return true;
   }
 
   private async syncHistory(): Promise<void> {
@@ -1631,6 +1671,22 @@ struct Index {
   }
 
   private finishSending(statusText: string): void {
+    const localAssistantMessageId: string = this.activeAssistantMessageId;
+    if (localAssistantMessageId.length > 0) {
+      const messageIndex: number = this.findMessageIndex(localAssistantMessageId);
+      if (messageIndex >= 0) {
+        const nextMessage: ChatMessage = this.messages[messageIndex].copy();
+        if (nextMessage.rawContent.length > 0) {
+          nextMessage.visibleContent = nextMessage.rawContent;
+        }
+        nextMessage.isStreaming = false;
+        if (nextMessage.streamPhase !== ChatMessagePhase.Error && nextMessage.streamPhase !== ChatMessagePhase.Stopped) {
+          nextMessage.streamCompleted = true;
+        }
+        this.syncMessageUiState(nextMessage);
+        this.applyMessageToList(messageIndex, nextMessage);
+      }
+    }
     if (this.activeStreamSession !== null) {
       this.activeStreamSession.close();
     }
@@ -1691,19 +1747,16 @@ struct Index {
 
     let assistantBound: boolean = false;
     let userBound: boolean = false;
-    const nextMessages: Array<ChatMessage> = this.messages.slice();
-    for (let index: number = nextMessages.length - 1; index >= 0; index--) {
-      const nextMessage: ChatMessage = nextMessages[index].copy();
+    for (let index: number = this.messages.length - 1; index >= 0; index--) {
+      const nextMessage: ChatMessage = this.messages[index];
       if (!assistantBound && nextMessage.id === assistantMessageId) {
         nextMessage.conversationId = appConversationId;
-        nextMessages[index] = nextMessage;
         assistantBound = true;
         continue;
       }
 
       if (!userBound && nextMessage.role === 'user' && nextMessage.conversationId.trim().length === 0) {
         nextMessage.conversationId = appConversationId;
-        nextMessages[index] = nextMessage;
         userBound = true;
       }
 
@@ -1711,7 +1764,7 @@ struct Index {
         break;
       }
     }
-    this.messages = nextMessages;
+    this.messages = this.messages.slice();
   }
 
   private applyMessagePhase(message: ChatMessage, phase: ChatMessagePhase, label: string, eventName: string = ''): void {

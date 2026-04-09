@@ -238,55 +238,62 @@ export struct ChatBubble {
   @Prop isSpeaking: boolean = false;
 
   build() {
-    Column({ space: 8 }) {
-      if (this.shouldShowStatusOnly()) {
-        this.StreamingStatusBuilder();
-      } else {
-        Column({ space: 14 }) {
-          ChatBubbleContentArea({
-            message: this.message
-          })
-
-          if (this.message.showActions) {
-            ChatBubbleActionArea({
-              message: this.message,
-              isSpeaking: this.isSpeaking
+    ForEach([this.buildShellToken()], (_token: string) => {
+      Column({ space: 8 }) {
+        if (this.shouldShowStatusOnly()) {
+          this.StreamingStatusBuilder();
+        } else {
+          Column({ space: 14 }) {
+            ChatBubbleContentArea({
+              message: this.message
             })
+
+            if (this.message.showActions) {
+              ChatBubbleActionArea({
+                message: this.message,
+                isSpeaking: this.isSpeaking
+              })
+            }
+          }
+          .padding({
+            top: this.message.role === MessageRole.Assistant ? 18 : 10,
+            right: this.message.role === MessageRole.Assistant ? 22 : 10,
+            bottom: this.message.role === MessageRole.Assistant ? 18 : 10,
+            left: this.message.role === MessageRole.Assistant ? 22 : 10
+          })
+          .constraintSize({
+            maxWidth: this.message.role === MessageRole.Assistant ? '88%' : '78%'
+          })
+          .backgroundColor(this.getBubbleBackgroundColor())
+          .borderRadius(10)
+          .border(this.message.role === MessageRole.Assistant ? {
+            width: 1,
+            color: '#EEF2F7'
+          } : {
+            width: 0,
+            color: '#00000000'
+          })
+          .shadow({
+            radius: this.message.role === MessageRole.Assistant ? 18 : 14,
+            color: this.message.role === MessageRole.Assistant ? '#120F172A' : '#180F3D91',
+            offsetX: 0,
+            offsetY: 6
+          })
+          .clip(true)
+
+          if (this.shouldShowStatusHint()) {
+            this.StreamingStatusBuilder();
           }
         }
-        .padding({
-          top: this.message.role === MessageRole.Assistant ? 18 : 10,
-          right: this.message.role === MessageRole.Assistant ? 22 : 10,
-          bottom: this.message.role === MessageRole.Assistant ? 18 : 10,
-          left: this.message.role === MessageRole.Assistant ? 22 : 10
-        })
-        .constraintSize({
-          maxWidth: this.message.role === MessageRole.Assistant ? '88%' : '78%'
-        })
-        .backgroundColor(this.getBubbleBackgroundColor())
-        .borderRadius(10)
-        .border(this.message.role === MessageRole.Assistant ? {
-          width: 1,
-          color: '#EEF2F7'
-        } : {
-          width: 0,
-          color: '#00000000'
-        })
-        .shadow({
-          radius: this.message.role === MessageRole.Assistant ? 18 : 14,
-          color: this.message.role === MessageRole.Assistant ? '#120F172A' : '#180F3D91',
-          offsetX: 0,
-          offsetY: 6
-        })
-        .clip(true)
-
-        if (this.shouldShowStatusHint()) {
-          this.StreamingStatusBuilder();
-        }
       }
-    }
-    .width('100%')
-    .alignItems(this.message.role === MessageRole.Assistant ? HorizontalAlign.Start : HorizontalAlign.End)
+      .width('100%')
+      .alignItems(this.message.role === MessageRole.Assistant ? HorizontalAlign.Start : HorizontalAlign.End)
+    }, (token: string) => token)
+  }
+
+  private buildShellToken(): string {
+    return `${this.message.role}:${this.message.showActions ? '1' : '0'}:${this.message.statusLabel}` +
+      `:${this.message.streamPhase}:${this.message.isStreaming ? '1' : '0'}:${this.message.visibleContent.length}`;
   }
 
   @Builder
