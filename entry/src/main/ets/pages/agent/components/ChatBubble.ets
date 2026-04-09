@@ -35,7 +35,7 @@ struct ChatBubbleContentArea {
 
   private buildContentToken(): string {
     return `${this.message.visibleContent.length}-${this.message.rawContent.length}` +
-      `-${this.message.activeAnswerVersionIndex}-${this.message.isStreaming}`;
+      `-${this.message.activeAnswerVersionIndex}-${this.message.isStreaming ? '1' : '0'}`;
   }
 }
 
