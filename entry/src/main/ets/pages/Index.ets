@@ -285,7 +285,7 @@ struct Index {
             this.draft = '请生成一段 Markdown 回复，包含标题、任务列表、代码块、表格和总结。';
           })
 
-        Button(this.isSending ? 'Stop' : 'Send')
+        Button(this.isSending ? '停止回复' : 'Send')
           .layoutWeight(1)
           .height(46)
           .fontSize(14)
@@ -1025,6 +1025,24 @@ struct Index {
     this.messages = nextMessages;
   }
 
+  private findPairedUserMessageIndex(assistantMessageIndex: number): number {
+    if (assistantMessageIndex <= 0 || assistantMessageIndex >= this.messages.length) {
+      return -1;
+    }
+
+    for (let index: number = assistantMessageIndex - 1; index >= 0; index--) {
+      const candidate: ChatMessage = this.messages[index];
+      if (candidate.role === MessageRole.User) {
+        return index;
+      }
+      if (candidate.role === MessageRole.Assistant) {
+        return -1;
+      }
+    }
+
+    return -1;
+  }
+
   private buildGuideMessages(): Array<ChatMessage> {
     const guideMarkdown: string = [
       '# HiAgent 已接入',
@@ -1199,9 +1217,10 @@ struct Index {
     const messageIndex: number = this.findMessageIndex(localMessageId);
     if (messageIndex >= 0) {
       const nextMessage: ChatMessage = this.messages[messageIndex].copy();
-      nextMessage.rawContent = nextMessage.rawContent.length > 0
-        ? `${nextMessage.rawContent}\n\n> 接口错误：${errorMessage}`
-        : `> 接口错误\n\n${errorMessage}`;
+      if (nextMessage.rawContent.trim().length === 0) {
+        nextMessage.rawContent = '接口请求失败，请稍后重试。';
+        nextMessage.visibleContent = '';
+      }
       this.applyMessagePhase(nextMessage, ChatMessagePhase.Error, '出错', 'error');
       nextMessage.streamCompleted = true;
       nextMessage.isStreaming = true;
@@ -1219,7 +1238,8 @@ struct Index {
 
     const nextMessage: ChatMessage = this.messages[messageIndex].copy();
     if (nextMessage.rawContent.trim().length === 0) {
-      nextMessage.rawContent = '已停止本次生成。';
+      nextMessage.rawContent = '响应生成已停止~';
+      nextMessage.visibleContent = '';
     }
     this.applyMessagePhase(nextMessage, ChatMessagePhase.Stopped, '已停止', 'stopped');
     nextMessage.streamCompleted = true;
@@ -1804,10 +1824,8 @@ struct Index {
       return;
     }
 
-    const hydratedMessage: ChatMessage | null = await this.ensureMessageInfoLoaded(messageId);
-    if (hydratedMessage === null) {
-      return;
-    }
+    const hydratedMessage: ChatMessage = this.messages[messageIndex].copy();
+    this.applyActiveVariantToMessage(hydratedMessage);
     const activeVariant: ChatAnswerVariant | null = this.getActiveAnswerVariant(hydratedMessage);
     if (activeVariant === null || activeVariant.serviceMessageId.trim().length === 0) {
       this.showToast('当前回复缺少删除所需的 messageId');
@@ -1825,21 +1843,22 @@ struct Index {
       if (nextVariants.length === 0) {
         this.answerVariantsByMessageId.delete(messageId);
         const nextMessages: Array<ChatMessage> = this.messages.slice();
+        const pairedUserMessageIndex: number = this.findPairedUserMessageIndex(messageIndex);
         nextMessages.splice(messageIndex, 1);
+        if (pairedUserMessageIndex >= 0) {
+          nextMessages.splice(pairedUserMessageIndex, 1);
+        }
         this.messages = nextMessages;
+        this.statusText = pairedUserMessageIndex >= 0 ? '已删除当前问答。' : '已删除当前回复。';
       } else {
         const fallbackIndex: number = Math.min(hydratedMessage.activeAnswerVersionIndex, nextVariants.length - 1);
-        const fallbackMessageId: string = nextVariants[fallbackIndex].serviceMessageId;
         this.replaceAnswerVariants(messageId, nextVariants);
         const nextMessage: ChatMessage = hydratedMessage.copy();
         nextMessage.activeAnswerVersionIndex = fallbackIndex;
         this.applyActiveVariantToMessage(nextMessage);
         this.applyMessageToList(messageIndex, nextMessage);
-        if (fallbackMessageId.trim().length > 0) {
-          await this.refreshMessageVariants(messageId, fallbackMessageId);
-        }
+        this.statusText = '已删除当前回复。';
       }
-      this.statusText = '已删除当前回复。';
     } catch (error) {
       const errorMessage: string = this.stringifyError(error);
       this.statusText = `删除失败：${errorMessage}`;

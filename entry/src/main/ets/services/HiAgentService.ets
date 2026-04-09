@@ -234,9 +234,11 @@ export class HiAgentService {
     const session: HiAgentStreamSession = new HiAgentStreamSession(request);
     const decoder: util.TextDecoder = util.TextDecoder.create('utf-8', { ignoreBOM: true });
     let sseBuffer: string = '';
-    let errorBodyBuffer: string = '';
+    let rawBodyBuffer: string = '';
     let responseCode: number = 0;
+    let responseCodeResolved: boolean = false;
     let finished: boolean = false;
+    let pendingStreamEnd: boolean = false;
 
     const cleanup = (): void => {
       session.close();
@@ -276,14 +278,52 @@ export class HiAgentService {
       }
     };
 
+    const finalizeStream = (tailText: string = '', waitAttempt: number = 0): void => {
+      if (finished) {
+        return;
+      }
+      if (!responseCodeResolved) {
+        if (waitAttempt >= 10) {
+          fail(HiAgentService.extractApiErrorMessageFromText(
+            rawBodyBuffer + tailText,
+            'HiAgent 流式请求失败，未获取到有效状态码。'
+          ));
+          return;
+        }
+        setTimeout(() => {
+          finalizeStream(tailText, waitAttempt + 1);
+        }, 30);
+        return;
+      }
+
+      if (responseCode < 200 || responseCode >= 300) {
+        fail(HiAgentService.extractApiErrorMessageFromText(
+          rawBodyBuffer + tailText,
+          `HiAgent 流式请求失败，HTTP ${responseCode}。`
+        ));
+        return;
+      }
+
+      const parsed = HiAgentSseParser.parseChunk(tailText, sseBuffer);
+      sseBuffer = parsed.remaining;
+      emitEvents(parsed.events);
+      emitEvents(HiAgentSseParser.flushRemaining(sseBuffer));
+      sseBuffer = '';
+
+      finished = true;
+      cleanup();
+      HiAgentService.logInfo(`stream completed path=${path}`);
+      onComplete();
+    };
+
     request.on('dataReceive', (chunk: ArrayBuffer) => {
       if (finished) {
         return;
       }
       const chunkText: string = decoder.decodeToString(new Uint8Array(chunk), { stream: true });
+      rawBodyBuffer += chunkText;
       HiAgentService.logInfo(`stream raw chunk path=${path} chunk=${HiAgentService.redactSensitiveText(chunkText)}`);
       if (responseCode > 0 && (responseCode < 200 || responseCode >= 300)) {
-        errorBodyBuffer += chunkText;
         return;
       }
       const parsed = HiAgentSseParser.parseChunk(chunkText, sseBuffer);
@@ -296,25 +336,10 @@ export class HiAgentService {
         return;
       }
 
+      pendingStreamEnd = true;
       const tailText: string = decoder.decodeToString(new Uint8Array(0), { stream: false });
-      if (responseCode > 0 && (responseCode < 200 || responseCode >= 300)) {
-        errorBodyBuffer += tailText;
-        fail(HiAgentService.extractApiErrorMessageFromText(
-          errorBodyBuffer,
-          `HiAgent 流式请求失败，HTTP ${responseCode}。`
-        ));
-        return;
-      }
-      const parsed = HiAgentSseParser.parseChunk(tailText, sseBuffer);
-      sseBuffer = parsed.remaining;
-      emitEvents(parsed.events);
-      emitEvents(HiAgentSseParser.flushRemaining(sseBuffer));
-      sseBuffer = '';
-
-      finished = true;
-      cleanup();
-      HiAgentService.logInfo(`stream completed path=${path}`);
-      onComplete();
+      rawBodyBuffer += tailText;
+      finalizeStream(tailText);
     });
 
     request.on('headersReceive', (headers: Object) => {
@@ -340,7 +365,11 @@ export class HiAgentService {
         return;
       }
       responseCode = Number(streamResponseCode);
+      responseCodeResolved = true;
       HiAgentService.logInfo(`stream response code path=${path} code=${responseCode}`);
+      if (pendingStreamEnd) {
+        finalizeStream();
+      }
     }).catch((error: Object) => {
       fail(HiAgentService.stringifyError(error));
     });
