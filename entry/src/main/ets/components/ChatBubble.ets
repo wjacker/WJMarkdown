@@ -20,7 +20,7 @@ export struct ChatBubble {
             Column() {
               MarkdownMessage({
                 content: this.content,
-                isStreaming: false,
+                isStreaming: this.isStreaming,
                 isAssistant: true,
                 streamingLabel: ''
               })

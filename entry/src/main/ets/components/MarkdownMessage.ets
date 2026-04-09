@@ -46,6 +46,10 @@ export struct MarkdownMessage {
   }
 
   private shouldUseWebMathRenderer(): boolean {
+    if (this.isStreaming) {
+      return false;
+    }
+
     return this.content.includes('\\(') ||
       this.content.includes('\\[') ||
       this.content.includes('$$') ||
