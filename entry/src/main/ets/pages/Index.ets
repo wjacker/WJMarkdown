@@ -1755,6 +1755,8 @@ struct Index {
       return;
     }
 
+    const pairedUserMessageIndex: number = this.findPairedUserMessageIndex(messageIndex);
+    const pairedUserMessage: ChatMessage | null = pairedUserMessageIndex >= 0 ? this.messages[pairedUserMessageIndex].copy() : null;
     const sourceMessage: ChatMessage = this.messages[messageIndex].copy();
     const existingVariants: Array<ChatAnswerVariant> = this.ensureAnswerVariants(sourceMessage);
     if (existingVariants.length > 0) {
@@ -1789,7 +1791,16 @@ struct Index {
     sourceMessage.visibleContent = '';
     sourceMessage.feedback = MessageFeedback.None;
     sourceMessage.createdAt = pendingVariant.createdAt;
-    this.applyMessageToList(messageIndex, sourceMessage);
+    const nextMessages: Array<ChatMessage> = this.messages.slice();
+    nextMessages.splice(messageIndex, 1);
+    if (pairedUserMessageIndex >= 0) {
+      nextMessages.splice(pairedUserMessageIndex, 1);
+    }
+    if (pairedUserMessage !== null) {
+      nextMessages.push(pairedUserMessage);
+    }
+    nextMessages.push(sourceMessage);
+    this.messages = nextMessages;
     this.activeAssistantMessageId = messageId;
     this.isSending = true;
     this.statusText = '正在重新回答这条回复...';
