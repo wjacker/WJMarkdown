@@ -955,8 +955,6 @@ struct Index {
     this.isConversationDrawerVisible = false;
     this.isRenameDialogVisible = false;
     if (this.conversationId === appConversationId) {
-      this.statusText = `会话 ${this.shortenId(appConversationId)} 已连接，正在同步历史...`;
-      await this.syncHistory();
       return;
     }
     this.answerVariantsByMessageId.clear();
@@ -1213,7 +1211,6 @@ struct Index {
       );
       this.answerVariantsByMessageId.clear();
       this.messages = this.buildHistoryMessages(historyMessages);
-      void this.refreshConversationList(false);
       if (historyMessages.length > 0) {
         const latestHistory: HiAgentHistoryMessage = historyMessages[historyMessages.length - 1];
         const previewText: string = latestHistory.query.trim().length > 0 ? latestHistory.query : latestHistory.answer;
