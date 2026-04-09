@@ -389,7 +389,7 @@ struct Index {
         this.openRenameConversation(appConversationId);
         return;
       }
-      void this.deleteConversationItem(appConversationId);
+      this.confirmDeleteConversation(appConversationId);
     })
   }
 
@@ -1079,6 +1079,24 @@ struct Index {
     if (this.conversationId === appConversationId) {
       this.startNewConversation();
     }
+  }
+
+  private confirmDeleteConversation(appConversationId: string): void {
+    AlertDialog.show({
+      title: '确定删除对话记录？',
+      message: '确定删除对话记录？删除后将无法恢复',
+      primaryButton: {
+        value: '取消',
+        action: () => {
+        }
+      },
+      secondaryButton: {
+        value: '删除',
+        action: () => {
+          void this.deleteConversationItem(appConversationId);
+        }
+      }
+    });
   }
 
   private async sendPrompt(): Promise<void> {
