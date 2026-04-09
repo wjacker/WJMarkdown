@@ -1244,6 +1244,7 @@ struct Index {
     for (let index: number = 0; index < historyMessage.otherAnswers.length; index++) {
       variants.push(this.buildVariantFromAnswerInfo(historyMessage.otherAnswers[index]));
     }
+    variants.sort((left: ChatAnswerVariant, right: ChatAnswerVariant) => left.createdAt - right.createdAt);
 
     if (historyMessage.answerInfo.messageId.trim().length > 0 || historyMessage.answerInfo.answer.trim().length > 0) {
       variants.push(this.buildVariantFromAnswerInfo(historyMessage.answerInfo));
