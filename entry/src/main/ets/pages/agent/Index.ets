@@ -6,18 +6,14 @@ import preferences from '@ohos.data.preferences';
 import textToSpeech from '@hms.ai.textToSpeech';
 import { ChatAnswerVariant, ChatMessage, ChatMessagePhase, MessageFeedback, MessageRole } from './models/ChatModels';
 import { HiAgentConfig, HiAgentEventHelper, HiAgentHistoryMessage, HiAgentMessageAnswerInfo, HiAgentStreamEvent } from './models/HiAgentModels';
+import { AgentConfigStore, AgentStoredConfig } from './services/AgentConfigStore';
 import { HiAgentService, HiAgentStreamSession } from './services/HiAgentService';
+import { AgentTextUtils } from './utils/AgentTextUtils';
+import { AgentVariantHelper } from './utils/AgentVariantHelper';
 
 @Entry
 @Component
 struct Index {
-  private static readonly CONFIG_STORE_NAME: string = 'hiagent_chat_config';
-  private static readonly KEY_API_URL: string = 'api_url';
-  private static readonly KEY_API_KEY: string = 'api_key';
-  private static readonly KEY_USER_ID: string = 'user_id';
-  private static readonly KEY_CONVERSATION_ID: string = 'conversation_id';
-  private static readonly KEY_CONFIG_EXPANDED: string = 'config_expanded';
-
   @State private messages: Array<ChatMessage> = [];
   @State private draft: string = '请生成一段包含任务列表、代码块和表格的 Markdown 回复。';
   @State private apiUrl: string = '';
@@ -363,15 +359,14 @@ struct Index {
   private restoreSavedConfig(): void {
     try {
       const context: Context = getContext(this);
-      const store: preferences.Preferences = preferences.getPreferencesSync(context, {
-        name: Index.CONFIG_STORE_NAME
-      });
+      const store: preferences.Preferences = AgentConfigStore.open(context);
       this.configStore = store;
-      this.apiUrl = this.readStoredString(Index.KEY_API_URL, '');
-      this.apiKey = this.readStoredString(Index.KEY_API_KEY, '');
-      this.userId = this.readStoredString(Index.KEY_USER_ID, 'demo-user');
-      this.conversationId = this.readStoredString(Index.KEY_CONVERSATION_ID, '');
-      this.isConfigExpanded = this.readStoredBoolean(Index.KEY_CONFIG_EXPANDED, true);
+      const storedConfig: AgentStoredConfig = AgentConfigStore.load(store);
+      this.apiUrl = storedConfig.apiUrl;
+      this.apiKey = storedConfig.apiKey;
+      this.userId = storedConfig.userId;
+      this.conversationId = storedConfig.conversationId;
+      this.isConfigExpanded = storedConfig.isConfigExpanded;
       if (this.buildConfig().isReady() && this.conversationId.trim().length > 0) {
         this.statusText = `已恢复上次会话 ${this.shortenId(this.conversationId)}，正在同步历史...`;
         void this.syncHistory();
@@ -410,39 +405,21 @@ struct Index {
     try {
       if (this.configStore === null) {
         const context: Context = getContext(this);
-        this.configStore = preferences.getPreferencesSync(context, {
-          name: Index.CONFIG_STORE_NAME
-        });
+        this.configStore = AgentConfigStore.open(context);
       }
       if (this.configStore === null) {
         return;
       }
-
-      this.configStore.putSync(Index.KEY_API_URL, this.apiUrl);
-      this.configStore.putSync(Index.KEY_API_KEY, this.apiKey);
-      this.configStore.putSync(Index.KEY_USER_ID, this.userId);
-      this.configStore.putSync(Index.KEY_CONVERSATION_ID, this.conversationId);
-      this.configStore.putSync(Index.KEY_CONFIG_EXPANDED, this.isConfigExpanded);
-      this.configStore.flushSync();
+      AgentConfigStore.save(this.configStore, new AgentStoredConfig(
+        this.apiUrl,
+        this.apiKey,
+        this.userId,
+        this.conversationId,
+        this.isConfigExpanded
+      ));
     } catch (_error) {
       // Ignore local persistence errors so chat features remain available.
     }
-  }
-
-  private readStoredString(key: string, defaultValue: string): string {
-    if (this.configStore === null) {
-      return defaultValue;
-    }
-    const value: preferences.ValueType = this.configStore.getSync(key, defaultValue);
-    return typeof value === 'string' ? value : defaultValue;
-  }
-
-  private readStoredBoolean(key: string, defaultValue: boolean): boolean {
-    if (this.configStore === null) {
-      return defaultValue;
-    }
-    const value: preferences.ValueType = this.configStore.getSync(key, defaultValue);
-    return typeof value === 'boolean' ? value : defaultValue;
   }
 
   private async sendPrompt(): Promise<void> {
@@ -660,35 +637,14 @@ struct Index {
   }
 
   private createAnswerVariantFromMessage(message: ChatMessage): ChatAnswerVariant {
-    const variant: ChatAnswerVariant = new ChatAnswerVariant(
-      message.serviceMessageId.length > 0 ? message.serviceMessageId : this.createMessageId(`variant-${message.id}`),
-      message.rawContent,
-      message.visibleContent
+    return AgentVariantHelper.createAnswerVariantFromMessage(
+      message,
+      this.createMessageId(`variant-${message.id}`)
     );
-    variant.serviceMessageId = message.serviceMessageId;
-    variant.taskId = message.taskId;
-    variant.createdAt = message.createdAt;
-    variant.feedback = message.feedback;
-    variant.isStreaming = message.isStreaming;
-    variant.streamCompleted = message.streamCompleted;
-    variant.streamPhase = message.streamPhase;
-    variant.statusLabel = message.statusLabel;
-    variant.lastEvent = message.lastEvent;
-    return variant;
   }
 
   private applyAnswerVariantMeta(message: ChatMessage, variants: Array<ChatAnswerVariant>): void {
-    message.answerVersionCount = variants.length;
-    if (variants.length === 0) {
-      message.activeAnswerVersionIndex = 0;
-      return;
-    }
-    if (message.activeAnswerVersionIndex < 0) {
-      message.activeAnswerVersionIndex = 0;
-    }
-    if (message.activeAnswerVersionIndex >= variants.length) {
-      message.activeAnswerVersionIndex = variants.length - 1;
-    }
+    AgentVariantHelper.applyAnswerVariantMeta(message, variants);
   }
 
   private syncMessageToActiveVariant(message: ChatMessage): void {
@@ -702,17 +658,7 @@ struct Index {
     }
 
     const activeVariant: ChatAnswerVariant = variants[message.activeAnswerVersionIndex];
-    activeVariant.rawContent = message.rawContent;
-    activeVariant.visibleContent = message.visibleContent;
-    activeVariant.serviceMessageId = message.serviceMessageId;
-    activeVariant.taskId = message.taskId;
-    activeVariant.createdAt = message.createdAt;
-    activeVariant.feedback = message.feedback;
-    activeVariant.isStreaming = message.isStreaming;
-    activeVariant.streamCompleted = message.streamCompleted;
-    activeVariant.streamPhase = message.streamPhase;
-    activeVariant.statusLabel = message.statusLabel;
-    activeVariant.lastEvent = message.lastEvent;
+    AgentVariantHelper.syncMessageToVariant(message, activeVariant);
   }
 
   private applyActiveVariantToMessage(message: ChatMessage): void {
@@ -726,17 +672,7 @@ struct Index {
     }
 
     const activeVariant: ChatAnswerVariant = variants[message.activeAnswerVersionIndex];
-    message.rawContent = activeVariant.rawContent;
-    message.visibleContent = activeVariant.visibleContent;
-    message.serviceMessageId = activeVariant.serviceMessageId;
-    message.taskId = activeVariant.taskId;
-    message.createdAt = activeVariant.createdAt;
-    message.feedback = activeVariant.feedback;
-    message.isStreaming = activeVariant.isStreaming;
-    message.streamCompleted = activeVariant.streamCompleted;
-    message.streamPhase = activeVariant.streamPhase;
-    message.statusLabel = activeVariant.statusLabel;
-    message.lastEvent = activeVariant.lastEvent;
+    AgentVariantHelper.applyVariantToMessage(message, activeVariant);
   }
 
   private replaceAnswerVariants(messageId: string, variants: Array<ChatAnswerVariant>): void {
@@ -793,25 +729,13 @@ struct Index {
   }
 
   private buildVariantMergeKey(variant: ChatAnswerVariant): string {
-    if (variant.serviceMessageId.trim().length > 0) {
-      return `id:${variant.serviceMessageId.trim()}`;
-    }
-    const rawKey: string = variant.rawContent.trim();
-    if (rawKey.length > 0) {
-      return `raw:${rawKey}`;
-    }
-    return `local:${variant.id}`;
+    return AgentVariantHelper.buildVariantMergeKey(variant);
   }
 
   private buildPendingQueryAgainVariant(localMessageId: string): ChatAnswerVariant {
-    const pendingVariant: ChatAnswerVariant = new ChatAnswerVariant(this.createMessageId(`variant-${localMessageId}`));
-    pendingVariant.createdAt = Date.now();
-    pendingVariant.isStreaming = true;
-    pendingVariant.streamCompleted = false;
-    pendingVariant.streamPhase = ChatMessagePhase.Sending;
-    pendingVariant.statusLabel = '发送中';
-    pendingVariant.lastEvent = 'query_again';
-    return pendingVariant;
+    return AgentVariantHelper.buildPendingQueryAgainVariant(localMessageId, (prefix: string): string => {
+      return this.createMessageId(prefix);
+    });
   }
 
   private applyMessageToList(messageIndex: number, nextMessage: ChatMessage): void {
@@ -1240,67 +1164,19 @@ struct Index {
   }
 
   private mergeStreamAnswer(currentContent: string, incomingContent: string, replaceAll: boolean = false): string {
-    const normalizedIncomingContent: string = this.normalizeStreamText(incomingContent);
-    if (normalizedIncomingContent.length === 0) {
-      return currentContent;
-    }
-    if (replaceAll || currentContent.length === 0) {
-      return normalizedIncomingContent;
-    }
-    if (normalizedIncomingContent === currentContent) {
-      return currentContent;
-    }
-    if (normalizedIncomingContent.startsWith(currentContent)) {
-      return normalizedIncomingContent;
-    }
-    if (currentContent.endsWith(normalizedIncomingContent)) {
-      return currentContent;
-    }
-
-    const overlapLength: number = this.findStreamOverlapLength(currentContent, normalizedIncomingContent);
-    if (overlapLength > 0) {
-      return `${currentContent}${normalizedIncomingContent.substring(overlapLength)}`;
-    }
-
-    return `${currentContent}${normalizedIncomingContent}`;
+    return AgentTextUtils.mergeStreamAnswer(currentContent, incomingContent, replaceAll);
   }
 
   private normalizeStreamText(content: string): string {
-    let normalized: string = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-    if (normalized.indexOf('\n') < 0 && normalized.includes('\\n')) {
-      normalized = normalized.replace(/\\r\\n/g, '\n').replace(/\\n/g, '\n').replace(/\\t/g, '\t');
-    }
-    return normalized;
-  }
-
-  private findStreamOverlapLength(currentContent: string, incomingContent: string): number {
-    const maxOverlap: number = Math.min(currentContent.length, incomingContent.length);
-    for (let length: number = maxOverlap; length > 0; length--) {
-      if (currentContent.substring(currentContent.length - length) === incomingContent.substring(0, length)) {
-        return length;
-      }
-    }
-    return 0;
+    return AgentTextUtils.normalizeStreamText(content);
   }
 
   private shortenId(value: string): string {
-    if (value.length <= 18) {
-      return value;
-    }
-    return `${value.substring(0, 8)}...${value.substring(value.length - 6)}`;
+    return AgentTextUtils.shortenId(value);
   }
 
   private stringifyError(error: Object): string {
-    if (typeof error === 'string') {
-      return error;
-    }
-    if (typeof error === 'object' && error !== null) {
-      const message: Object = (error as ESObject)['message'];
-      if (typeof message === 'string' && message.length > 0) {
-        return message;
-      }
-    }
-    return `${error}`;
+    return AgentTextUtils.stringifyError(error);
   }
 
   private getStatusBackgroundColor(): string {
@@ -1583,40 +1459,17 @@ struct Index {
   }
 
   private buildVariantFromAnswerInfo(answerInfo: HiAgentMessageAnswerInfo): ChatAnswerVariant {
-    const variant: ChatAnswerVariant = new ChatAnswerVariant(
-      answerInfo.messageId.length > 0 ? answerInfo.messageId : this.createMessageId('answer'),
-      answerInfo.answer,
-      answerInfo.answer
-    );
-    variant.serviceMessageId = answerInfo.messageId;
-    variant.taskId = answerInfo.taskId;
-    variant.createdAt = answerInfo.createdTime * 1000;
-    variant.feedback = this.toMessageFeedback(answerInfo.like);
-    variant.isStreaming = false;
-    variant.streamCompleted = true;
-    variant.streamPhase = ChatMessagePhase.Finished;
-    variant.statusLabel = '已结束';
-    return variant;
+    return AgentVariantHelper.buildVariantFromAnswerInfo(answerInfo, (prefix: string): string => {
+      return this.createMessageId(prefix);
+    });
   }
 
   private toLikeType(feedback: MessageFeedback): number {
-    if (feedback === MessageFeedback.Like) {
-      return 1;
-    }
-    if (feedback === MessageFeedback.Dislike) {
-      return -1;
-    }
-    return 0;
+    return AgentVariantHelper.toLikeType(feedback);
   }
 
   private toMessageFeedback(likeType: number): MessageFeedback {
-    if (likeType > 0) {
-      return MessageFeedback.Like;
-    }
-    if (likeType < 0) {
-      return MessageFeedback.Dislike;
-    }
-    return MessageFeedback.None;
+    return AgentVariantHelper.toMessageFeedback(likeType);
   }
 
   private async toggleSpeakMessage(messageId: string): Promise<void> {
@@ -1746,32 +1599,7 @@ struct Index {
   }
 
   private buildSpeechText(content: string): string {
-    const normalizedText: string = this.normalizeStreamText(content);
-    if (normalizedText.trim().length === 0) {
-      return '';
-    }
-
-    let speechText: string = normalizedText
-      .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
-      .replace(/<img[^>]*alt=["']([^"']*)["'][^>]*>/gi, '$1')
-      .replace(/<img[^>]*>/gi, '图片')
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-      .replace(/```[\w-]*\n/g, '代码如下：\n')
-      .replace(/```/g, '')
-      .replace(/`([^`]+)`/g, '$1')
-      .replace(/^#{1,6}\s*/gm, '')
-      .replace(/^>\s*/gm, '')
-      .replace(/^[-*+]\s+/gm, '')
-      .replace(/^\d+\.\s+/gm, '')
-      .replace(/\|/g, ' ')
-      .replace(/[*_~]/g, '')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
-
-    if (speechText.length === 0) {
-      speechText = normalizedText.trim();
-    }
-    return speechText;
+    return AgentTextUtils.buildSpeechText(content);
   }
 
   private showToast(message: string): void {
