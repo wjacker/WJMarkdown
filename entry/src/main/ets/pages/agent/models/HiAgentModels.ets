@@ -29,10 +29,28 @@ export class HiAgentConfig {
 export class HiAgentConversation {
   appConversationId: string;
   conversationName: string;
+  createTime: string;
+  lastChatTime: string;
+  emptyConversation: boolean;
+  createTimestamp: number;
+  isPinned: boolean;
 
-  constructor(appConversationId: string = '', conversationName: string = '') {
+  constructor(
+    appConversationId: string = '',
+    conversationName: string = '',
+    createTime: string = '',
+    lastChatTime: string = '',
+    emptyConversation: boolean = false,
+    createTimestamp: number = 0,
+    isPinned: boolean = false
+  ) {
     this.appConversationId = appConversationId;
     this.conversationName = conversationName;
+    this.createTime = createTime;
+    this.lastChatTime = lastChatTime;
+    this.emptyConversation = emptyConversation;
+    this.createTimestamp = createTimestamp;
+    this.isPinned = isPinned;
   }
 }
 
@@ -89,6 +107,54 @@ export class HiAgentGetConversationMessagesRequest {
     this.AppConversationID = appConversationId;
     this.Limit = limit;
     this.UserID = userId;
+  }
+}
+
+export class HiAgentGetConversationListRequest {
+  AppKey: string;
+  UserID: string;
+
+  constructor(appKey: string, userId: string) {
+    this.AppKey = appKey;
+    this.UserID = userId;
+  }
+}
+
+export class HiAgentUpdateConversationRequest {
+  AppKey: string;
+  AppConversationID: string;
+  ConversationName: string;
+  UserID: string;
+
+  constructor(appKey: string, appConversationId: string, conversationName: string, userId: string) {
+    this.AppKey = appKey;
+    this.AppConversationID = appConversationId;
+    this.ConversationName = conversationName;
+    this.UserID = userId;
+  }
+}
+
+export class HiAgentDeleteConversationRequest {
+  AppKey: string;
+  AppConversationID: string;
+  UserID: string;
+
+  constructor(appKey: string, appConversationId: string, userId: string) {
+    this.AppKey = appKey;
+    this.AppConversationID = appConversationId;
+    this.UserID = userId;
+  }
+}
+
+export class HiAgentSetConversationTopRequest {
+  AppKey: string;
+  UserID: string;
+  AppConversationID: string;
+
+  constructor(appKey: string, userId: string, appConversationId: string) {
+    this.AppKey = appKey;
+    this.UserID = userId;
+    this.AppConversationID = appConversationId;
   }
 }
 

@@ -5,7 +5,8 @@ import promptAction from '@ohos.promptAction';
 import preferences from '@ohos.data.preferences';
 import textToSpeech from '@hms.ai.textToSpeech';
 import { ChatAnswerVariant, ChatMessage, ChatMessagePhase, MessageFeedback, MessageRole } from './models/ChatModels';
-import { HiAgentConfig, HiAgentEventHelper, HiAgentHistoryMessage, HiAgentMessageAnswerInfo, HiAgentStreamEvent } from './models/HiAgentModels';
+import { AgentConversationHelper, AgentConversationItem, AgentConversationSection } from './models/ConversationModels';
+import { HiAgentConfig, HiAgentConversation, HiAgentEventHelper, HiAgentHistoryMessage, HiAgentMessageAnswerInfo, HiAgentStreamEvent } from './models/HiAgentModels';
 import { AgentConfigStore, AgentStoredConfig } from './services/AgentConfigStore';
 import { HiAgentService, HiAgentStreamSession } from './services/HiAgentService';
 import { AgentTextUtils } from './utils/AgentTextUtils';
@@ -25,6 +26,13 @@ struct Index {
   @State private isSending: boolean = false;
   @State private speakingMessageId: string = '';
   @State private shouldAutoScrollToBottom: boolean = true;
+  @State private conversationItems: Array<AgentConversationItem> = [];
+  @State private isConversationDrawerVisible: boolean = false;
+  @State private activeConversationMenuId: string = '';
+  @State private activeConversationMenuTop: number = 88;
+  @State private renameConversationId: string = '';
+  @State private renameDraft: string = '';
+  @State private isRenameDialogVisible: boolean = false;
 
   private messageScroller: Scroller = new Scroller();
   private configStore: preferences.Preferences | null = null;
@@ -56,49 +64,76 @@ struct Index {
   }
 
   build() {
-    Column({ space: 0 }) {
-      this.HeaderBuilder();
-      this.ConfigBuilder();
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column({ space: 0 }) {
+        this.HeaderBuilder();
+        this.ConfigBuilder();
 
-      List({ space: 22, scroller: this.messageScroller }) {
-        ForEach(this.messages, (message: ChatMessage) => {
-          ListItem() {
-            ChatBubble({
-              message: message,
-              isSpeaking: this.speakingMessageId === message.id,
-            })
-            .padding({ top: 2, bottom: 6 })
-          }
-        }, (message: ChatMessage) => message.id)
-      }
-      .width('100%')
-      .layoutWeight(1)
-      .padding({ top: 14, right: 16, bottom: 20, left: 16 })
-      .backgroundColor('#F4F7FB')
-      .scrollBar(BarState.Off)
-      .onReachEnd(() => {
-        this.shouldAutoScrollToBottom = true;
-      })
-      .onDidScroll((_scrollOffset: number, scrollState: ScrollState) => {
-        if (scrollState === ScrollState.Scroll) {
-          this.shouldAutoScrollToBottom = this.safeIsAtEnd();
+        List({ space: 22, scroller: this.messageScroller }) {
+          ForEach(this.messages, (message: ChatMessage) => {
+            ListItem() {
+              ChatBubble({
+                message: message,
+                isSpeaking: this.speakingMessageId === message.id,
+              })
+              .padding({ top: 2, bottom: 6 })
+            }
+          }, (message: ChatMessage) => message.id)
         }
-      })
-      .onScrollStop(() => {
-        this.shouldAutoScrollToBottom = this.safeIsAtEnd();
-      })
+        .width('100%')
+        .layoutWeight(1)
+        .padding({ top: 14, right: 16, bottom: 20, left: 16 })
+        .backgroundColor('#F4F7FB')
+        .scrollBar(BarState.Off)
+        .onReachEnd(() => {
+          this.shouldAutoScrollToBottom = true;
+        })
+        .onDidScroll((_scrollOffset: number, scrollState: ScrollState) => {
+          if (scrollState === ScrollState.Scroll) {
+            this.shouldAutoScrollToBottom = this.safeIsAtEnd();
+          }
+        })
+        .onScrollStop(() => {
+          this.shouldAutoScrollToBottom = this.safeIsAtEnd();
+        })
 
-      this.ComposerBuilder();
+        this.ComposerBuilder();
+      }
+      .height('100%')
+      .width('100%')
+      .backgroundColor('#E9EEF5')
+
+      if (this.isConversationDrawerVisible) {
+        this.ConversationDrawerOverlayBuilder();
+      }
+
+      if (this.isRenameDialogVisible) {
+        this.RenameConversationDialogBuilder();
+      }
     }
     .height('100%')
     .width('100%')
-    .backgroundColor('#E9EEF5')
   }
 
   @Builder
   private HeaderBuilder() {
     Column({ space: 16 }) {
-      Row() {
+      Row({ space: 12 }) {
+        Button() {
+          Image($r('app.media.icon_ai_more'))
+            .width(18)
+            .height(18)
+            .fillColor('#0F3D91')
+        }
+        .width(38)
+        .height(38)
+        .backgroundColor('#FFFFFF')
+        .borderRadius(19)
+        .onClick(() => {
+          this.isConversationDrawerVisible = true;
+          this.activeConversationMenuId = '';
+        })
+
         Column({ space: 6 }) {
           Text('HiAgent Markdown Chat')
             .fontSize(24)
@@ -129,6 +164,297 @@ struct Index {
     .width('100%')
     .padding({ top: 18, right: 16, bottom: 12, left: 16 })
     .backgroundColor('#FFF7ED')
+  }
+
+  @Builder
+  private ConversationDrawerOverlayBuilder() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Row() {
+        Blank()
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor('#400F172A')
+      .onClick(() => {
+        this.isConversationDrawerVisible = false;
+        this.activeConversationMenuId = '';
+      })
+
+      Row() {
+        Column({ space: 14 }) {
+          Row() {
+            Text('对话历史')
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#111827')
+
+            Blank()
+
+            Button('新建')
+              .fontSize(12)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#0F3D91')
+              .backgroundColor('#DBEAFE')
+              .borderRadius(16)
+              .padding({ left: 12, right: 12 })
+              .onClick(() => {
+                this.isConversationDrawerVisible = false;
+                this.activeConversationMenuId = '';
+                this.startNewConversation();
+              })
+          }
+          .width('100%')
+
+          if (this.conversationItems.length === 0) {
+            Column({ space: 8 }) {
+              Text('还没有会话')
+                .fontSize(15)
+                .fontWeight(FontWeight.Medium)
+                .fontColor('#334155')
+
+              Text('发送第一条消息后，这里会自动保存会话记录。')
+                .fontSize(12)
+                .fontColor('#64748B')
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
+            .padding({ top: 10, right: 8, bottom: 10, left: 8 })
+          } else {
+            Stack({ alignContent: Alignment.TopStart }) {
+              List({ space: 12 }) {
+                ForEach(this.buildConversationSections(), (section: AgentConversationSection) => {
+                  ListItem() {
+                    Column({ space: 10 }) {
+                      Text(section.title)
+                        .fontSize(13)
+                        .fontWeight(FontWeight.Bold)
+                        .fontColor('#6B7280')
+                        .width('100%')
+                        .textAlign(TextAlign.Start)
+
+                      Column({ space: 12 }) {
+                        ForEach(section.items, (item: AgentConversationItem) => {
+                          this.ConversationItemBuilder(item)
+                        }, (item: AgentConversationItem) => this.buildConversationItemKey(item))
+                      }
+                      .width('100%')
+                    }
+                    .width('100%')
+                  }
+                }, (section: AgentConversationSection) => this.buildConversationSectionKey(section))
+              }
+              .width('100%')
+              .layoutWeight(1)
+              .scrollBar(BarState.Off)
+
+              if (this.activeConversationMenuId.length > 0) {
+                this.ConversationFloatingMenuBuilder()
+              }
+            }
+            .width('100%')
+            .layoutWeight(1)
+          }
+        }
+        .width('78%')
+        .height('100%')
+        .padding({ top: 52, right: 14, bottom: 20, left: 14 })
+        .backgroundColor('#FFFFFF')
+        .borderRadius({ topRight: 26, bottomRight: 26 })
+        .shadow({
+          radius: 28,
+          color: '#1F0F172A',
+          offsetX: 6,
+          offsetY: 0
+        })
+
+        Blank()
+          .layoutWeight(1)
+          .onClick(() => {
+            this.isConversationDrawerVisible = false;
+            this.activeConversationMenuId = '';
+          })
+      }
+      .width('100%')
+      .height('100%')
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  private ConversationItemBuilder(item: AgentConversationItem) {
+    Column({ space: 8 }) {
+      Row({ space: 10 }) {
+        Column() {
+          Text(AgentConversationHelper.buildDisplayTitle(item))
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#0F172A')
+            .maxLines(3)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Button() {
+          Image($r('app.media.icon_ai_more'))
+            .width(16)
+            .height(16)
+            .fillColor('#64748B')
+        }
+        .width(28)
+        .height(28)
+        .backgroundColor(Color.Transparent)
+        .borderRadius(14)
+        .onClick(() => {
+          if (this.activeConversationMenuId === item.appConversationId) {
+            this.activeConversationMenuId = '';
+            return;
+          }
+          this.activeConversationMenuTop = this.resolveConversationMenuTopFor(item.appConversationId);
+          this.activeConversationMenuId = item.appConversationId;
+        })
+      }
+      .width('100%')
+      .padding({ top: 12, right: 12, bottom: 12, left: 12 })
+      .backgroundColor(this.conversationId === item.appConversationId ? '#EFF6FF' : '#F8FAFC')
+      .border({
+        width: 1,
+        color: this.conversationId === item.appConversationId ? '#93C5FD' : '#E2E8F0'
+      })
+      .borderRadius(16)
+      .onClick(() => {
+        this.selectConversation(item.appConversationId);
+      })
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private ConversationFloatingMenuBuilder() {
+    Row() {
+      Blank()
+
+      Column({ space: 0 }) {
+        this.ConversationMenuItemBuilder(
+          this.isActiveConversationPinned() ? '取消置顶' : '置顶',
+          $r('app.media.icon_ai_pinned'),
+          '#0F172A',
+          'pin',
+          this.activeConversationMenuId
+        );
+        this.ConversationMenuItemBuilder('重命名', $r('app.media.icon_ai_edit'), '#0F172A', 'rename', this.activeConversationMenuId);
+        this.ConversationMenuItemBuilder('删除', $r('app.media.icon_ai_delete'), '#DC2626', 'delete', this.activeConversationMenuId);
+      }
+      .width(196)
+      .backgroundColor('#FFFFFF')
+      .borderRadius(22)
+      .shadow({
+        radius: 24,
+        color: '#220F172A',
+        offsetX: 0,
+        offsetY: 10
+      })
+      .padding({ top: 6, bottom: 6 })
+    }
+    .width('100%')
+    .margin({ top: this.activeConversationMenuTop, right: 20 })
+  }
+
+  @Builder
+  private ConversationMenuItemBuilder(label: string, icon: Resource, color: string, actionType: string,
+    appConversationId: string) {
+    Row({ space: 10 }) {
+      Image(icon)
+        .width(15)
+        .height(15)
+        .fillColor(color)
+
+      Text(label)
+        .fontSize(14)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(color)
+
+      Blank()
+    }
+    .width('100%')
+    .padding({ top: 12, right: 14, bottom: 12, left: 14 })
+    .onClick(() => {
+      if (actionType === 'pin') {
+        void this.toggleConversationPinned(appConversationId);
+        return;
+      }
+      if (actionType === 'rename') {
+        this.openRenameConversation(appConversationId);
+        return;
+      }
+      void this.deleteConversationItem(appConversationId);
+    })
+  }
+
+  @Builder
+  private RenameConversationDialogBuilder() {
+    Stack({ alignContent: Alignment.Center }) {
+      Row() {
+        Blank()
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor('#500F172A')
+      .onClick(() => {
+        this.isRenameDialogVisible = false;
+      })
+
+      Column({ space: 14 }) {
+        Text('重命名会话')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#111827')
+
+        TextInput({ text: this.renameDraft, placeholder: '请输入新的会话名称' })
+          .height(46)
+          .fontSize(14)
+          .backgroundColor('#F8FAFC')
+          .borderRadius(14)
+          .padding({ left: 12, right: 12 })
+          .onChange((value: string) => {
+            this.renameDraft = value;
+          })
+
+        Row({ space: 10 }) {
+          Button('取消')
+            .layoutWeight(1)
+            .height(42)
+            .fontSize(14)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#475569')
+            .backgroundColor('#F1F5F9')
+            .borderRadius(14)
+            .onClick(() => {
+              this.isRenameDialogVisible = false;
+            })
+
+          Button('确定')
+            .layoutWeight(1)
+            .height(42)
+            .fontSize(14)
+            .fontWeight(FontWeight.Bold)
+            .fontColor('#FFFFFF')
+            .backgroundColor('#2563EB')
+            .borderRadius(14)
+            .onClick(() => {
+              void this.confirmRenameConversation();
+            })
+        }
+        .width('100%')
+      }
+      .width('78%')
+      .padding(18)
+      .backgroundColor('#FFFFFF')
+      .borderRadius(24)
+    }
+    .width('100%')
+    .height('100%')
   }
 
   @Builder
@@ -352,6 +678,9 @@ struct Index {
   }
 
   private startNewConversation(): void {
+    this.isConversationDrawerVisible = false;
+    this.activeConversationMenuId = '';
+    this.isRenameDialogVisible = false;
     this.resetConversation();
     this.scheduleConfigSave();
   }
@@ -362,11 +691,15 @@ struct Index {
       const store: preferences.Preferences = AgentConfigStore.open(context);
       this.configStore = store;
       const storedConfig: AgentStoredConfig = AgentConfigStore.load(store);
+      this.conversationItems = AgentConversationHelper.sort(AgentConfigStore.loadConversations(store));
       this.apiUrl = storedConfig.apiUrl;
       this.apiKey = storedConfig.apiKey;
       this.userId = storedConfig.userId;
       this.conversationId = storedConfig.conversationId;
       this.isConfigExpanded = storedConfig.isConfigExpanded;
+      if (this.buildConfig().isReady()) {
+        void this.refreshConversationList(false);
+      }
       if (this.buildConfig().isReady() && this.conversationId.trim().length > 0) {
         this.statusText = `已恢复上次会话 ${this.shortenId(this.conversationId)}，正在同步历史...`;
         void this.syncHistory();
@@ -417,8 +750,311 @@ struct Index {
         this.conversationId,
         this.isConfigExpanded
       ));
+      AgentConfigStore.saveConversations(this.configStore, this.conversationItems);
     } catch (_error) {
       // Ignore local persistence errors so chat features remain available.
+    }
+  }
+
+  private persistConversationList(): void {
+    this.scheduleConfigSave();
+  }
+
+  private async refreshConversationList(showErrorToast: boolean = true): Promise<void> {
+    const config: HiAgentConfig = this.buildConfig();
+    if (!config.isReady()) {
+      return;
+    }
+
+    try {
+      const remoteConversations: Array<HiAgentConversation> = await HiAgentService.getConversationList(config);
+      const nextItems: Array<AgentConversationItem> = [];
+      for (let index: number = 0; index < remoteConversations.length; index++) {
+        const remoteConversation: HiAgentConversation = remoteConversations[index];
+        const localIndex: number = this.getConversationItemIndex(remoteConversation.appConversationId);
+        const localItem: AgentConversationItem | null = localIndex >= 0 ? this.conversationItems[localIndex] : null;
+        const createdAt: number = remoteConversation.createTimestamp > 0
+          ? remoteConversation.createTimestamp * 1000
+          : (localItem !== null ? localItem.createdAt : Date.now());
+        nextItems.push(new AgentConversationItem(
+          remoteConversation.appConversationId,
+          remoteConversation.conversationName.trim().length > 0 ? remoteConversation.conversationName : (localItem !== null ? localItem.title : ''),
+          createdAt,
+          remoteConversation.isPinned || (localItem !== null ? localItem.isPinned : false)
+        ));
+      }
+      this.conversationItems = AgentConversationHelper.sort(nextItems);
+      this.persistConversationList();
+    } catch (error) {
+      if (showErrorToast) {
+        this.showToast(`会话列表获取失败：${this.stringifyError(error)}`);
+      }
+    }
+  }
+
+  private upsertConversationItem(appConversationId: string, title: string = '', _preview: string = '', updatedAt: number = 0): void {
+    const normalizedId: string = appConversationId.trim();
+    if (normalizedId.length === 0) {
+      return;
+    }
+
+    const normalizedUpdatedAt: number = updatedAt > 0 ? updatedAt : Date.now();
+    const nextItems: Array<AgentConversationItem> = [];
+    let updated: boolean = false;
+    for (let index: number = 0; index < this.conversationItems.length; index++) {
+        const nextItem: AgentConversationItem = this.conversationItems[index].copy();
+        if (nextItem.appConversationId === normalizedId) {
+        if (title.trim().length > 0 && nextItem.title.trim().length === 0) {
+          nextItem.title = title.trim();
+        }
+        nextItem.createdAt = normalizedUpdatedAt;
+        nextItems.push(nextItem);
+        updated = true;
+      } else {
+        nextItems.push(nextItem);
+      }
+    }
+
+    if (!updated) {
+      nextItems.push(new AgentConversationItem(
+        normalizedId,
+        title.trim(),
+        normalizedUpdatedAt,
+        false
+      ));
+    }
+
+    this.conversationItems = AgentConversationHelper.sort(nextItems);
+    this.persistConversationList();
+  }
+
+  private getConversationItemIndex(appConversationId: string): number {
+    for (let index: number = 0; index < this.conversationItems.length; index++) {
+      if (this.conversationItems[index].appConversationId === appConversationId) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  private buildConversationSections(): Array<AgentConversationSection> {
+    const sections: Array<AgentConversationSection> = [];
+    const pinnedItems: Array<AgentConversationItem> = [];
+    const sectionMap: Map<string, Array<AgentConversationItem>> = new Map();
+    const orderedTitles: Array<string> = [];
+
+    for (let index: number = 0; index < this.conversationItems.length; index++) {
+      const item: AgentConversationItem = this.conversationItems[index];
+      if (item.isPinned) {
+        pinnedItems.push(item);
+        continue;
+      }
+      const title: string = AgentConversationHelper.buildGroupTitle(item.createdAt);
+      const existingItems: Array<AgentConversationItem> | undefined = sectionMap.get(title);
+      if (existingItems === undefined) {
+        sectionMap.set(title, [item]);
+        orderedTitles.push(title);
+      } else {
+        existingItems.push(item);
+      }
+    }
+
+    if (pinnedItems.length > 0) {
+      sections.push(new AgentConversationSection('置顶', pinnedItems));
+    }
+    for (let index: number = 0; index < orderedTitles.length; index++) {
+      const title: string = orderedTitles[index];
+      const items: Array<AgentConversationItem> | undefined = sectionMap.get(title);
+      if (items !== undefined) {
+        sections.push(new AgentConversationSection(title, items));
+      }
+    }
+    return sections;
+  }
+
+  private buildConversationItemKey(item: AgentConversationItem): string {
+    return `${item.appConversationId}:${item.title}:${item.isPinned ? '1' : '0'}:${item.createdAt}`;
+  }
+
+  private buildConversationSectionKey(section: AgentConversationSection): string {
+    let key: string = `${section.title}:${section.items.length}`;
+    for (let index: number = 0; index < section.items.length; index++) {
+      key += `|${this.buildConversationItemKey(section.items[index])}`;
+    }
+    return key;
+  }
+
+  private cloneConversationItems(): Array<AgentConversationItem> {
+    const nextItems: Array<AgentConversationItem> = [];
+    for (let index: number = 0; index < this.conversationItems.length; index++) {
+      nextItems.push(this.conversationItems[index].copy());
+    }
+    return nextItems;
+  }
+
+  private isActiveConversationPinned(): boolean {
+    const itemIndex: number = this.getConversationItemIndex(this.activeConversationMenuId);
+    if (itemIndex < 0) {
+      return false;
+    }
+    return this.conversationItems[itemIndex].isPinned;
+  }
+
+  private resolveConversationMenuTopFor(appConversationId: string): number {
+    if (appConversationId.length === 0) {
+      return 88;
+    }
+    let itemOffset: number = 0;
+    const sections: Array<AgentConversationSection> = this.buildConversationSections();
+    for (let sectionIndex: number = 0; sectionIndex < sections.length; sectionIndex++) {
+      itemOffset += 26;
+      for (let itemIndex: number = 0; itemIndex < sections[sectionIndex].items.length; itemIndex++) {
+        if (sections[sectionIndex].items[itemIndex].appConversationId === appConversationId) {
+          const nextTop: number = 60 + itemOffset;
+          return nextTop > 500 ? 500 : nextTop;
+        }
+        itemOffset += 60;
+      }
+      itemOffset += 12;
+    }
+    return 88;
+  }
+
+  private async selectConversation(appConversationId: string): Promise<void> {
+    if (this.isSending) {
+      this.showToast('当前仍在生成中，请稍后再切换会话');
+      return;
+    }
+    if (appConversationId.trim().length === 0) {
+      return;
+    }
+    this.activeConversationMenuId = '';
+    this.isConversationDrawerVisible = false;
+    this.isRenameDialogVisible = false;
+    if (this.conversationId === appConversationId) {
+      this.statusText = `会话 ${this.shortenId(appConversationId)} 已连接，正在同步历史...`;
+      await this.syncHistory();
+      return;
+    }
+    this.answerVariantsByMessageId.clear();
+    this.messages = this.buildGuideMessages();
+    this.conversationId = appConversationId;
+    this.scheduleConfigSave();
+    this.statusText = `会话 ${this.shortenId(appConversationId)} 已连接，正在同步历史...`;
+    await this.syncHistory();
+  }
+
+  private async toggleConversationPinned(appConversationId: string): Promise<void> {
+    const itemIndex: number = this.getConversationItemIndex(appConversationId);
+    if (itemIndex < 0) {
+      return;
+    }
+    const config: HiAgentConfig = this.buildConfig();
+    if (!config.isReady()) {
+      this.showToast('请先填写接口配置');
+      return;
+    }
+    const previousItems: Array<AgentConversationItem> = this.cloneConversationItems();
+    const nextItems: Array<AgentConversationItem> = [];
+    let nextPinnedState: boolean = false;
+    for (let index: number = 0; index < this.conversationItems.length; index++) {
+      const nextItem: AgentConversationItem = this.conversationItems[index].copy();
+      if (index === itemIndex) {
+        nextItem.isPinned = !nextItem.isPinned;
+        nextPinnedState = nextItem.isPinned;
+      }
+      nextItems.push(nextItem);
+    }
+    this.conversationItems = AgentConversationHelper.sort(nextItems);
+    this.activeConversationMenuId = '';
+    this.persistConversationList();
+    try {
+      if (nextPinnedState) {
+        await HiAgentService.setConversationTop(config, appConversationId);
+      } else {
+        await HiAgentService.cancelConversationTop(config, appConversationId);
+      }
+    } catch (error) {
+      this.conversationItems = previousItems;
+      this.persistConversationList();
+      this.showToast(this.stringifyError(error));
+    }
+  }
+
+  private openRenameConversation(appConversationId: string): void {
+    const itemIndex: number = this.getConversationItemIndex(appConversationId);
+    if (itemIndex < 0) {
+      return;
+    }
+    this.renameConversationId = appConversationId;
+    this.renameDraft = this.conversationItems[itemIndex].title;
+    this.isRenameDialogVisible = true;
+    this.activeConversationMenuId = '';
+  }
+
+  private async confirmRenameConversation(): Promise<void> {
+    const normalizedTitle: string = this.renameDraft.trim();
+    if (normalizedTitle.length === 0) {
+      this.showToast('会话名称不能为空');
+      return;
+    }
+    const targetConversationId: string = this.renameConversationId;
+    const itemIndex: number = this.getConversationItemIndex(targetConversationId);
+    if (itemIndex < 0) {
+      this.isRenameDialogVisible = false;
+      return;
+    }
+    const config: HiAgentConfig = this.buildConfig();
+    if (!config.isReady()) {
+      this.showToast('请先填写接口配置');
+      return;
+    }
+    const previousItems: Array<AgentConversationItem> = this.cloneConversationItems();
+    const nextItems: Array<AgentConversationItem> = [];
+    for (let index: number = 0; index < this.conversationItems.length; index++) {
+      const nextItem: AgentConversationItem = this.conversationItems[index].copy();
+      if (index === itemIndex) {
+        nextItem.title = normalizedTitle;
+      }
+      nextItems.push(nextItem);
+    }
+    this.conversationItems = AgentConversationHelper.sort(nextItems);
+    this.isRenameDialogVisible = false;
+    this.renameConversationId = '';
+    this.renameDraft = '';
+    this.persistConversationList();
+    try {
+      await HiAgentService.updateConversation(config, targetConversationId, normalizedTitle);
+    } catch (error) {
+      this.conversationItems = previousItems;
+      this.persistConversationList();
+      this.showToast(this.stringifyError(error));
+    }
+  }
+
+  private async deleteConversationItem(appConversationId: string): Promise<void> {
+    const config: HiAgentConfig = this.buildConfig();
+    if (!config.isReady()) {
+      this.showToast('请先填写接口配置');
+      return;
+    }
+    try {
+      await HiAgentService.deleteConversation(config, appConversationId);
+    } catch (error) {
+      this.showToast(this.stringifyError(error));
+      return;
+    }
+    const nextItems: Array<AgentConversationItem> = [];
+    for (let index: number = 0; index < this.conversationItems.length; index++) {
+      if (this.conversationItems[index].appConversationId !== appConversationId) {
+        nextItems.push(this.conversationItems[index].copy());
+      }
+    }
+    this.conversationItems = nextItems;
+    this.activeConversationMenuId = '';
+    this.persistConversationList();
+    if (this.conversationId === appConversationId) {
+      this.startNewConversation();
     }
   }
 
@@ -461,6 +1097,8 @@ struct Index {
 
     try {
       const appConversationId: string = await this.ensureConversation(config);
+      this.upsertConversationItem(appConversationId, prompt, prompt, Date.now());
+      void this.refreshConversationList(false);
       this.bindPendingMessagesToConversation(appConversationId, assistantMessageId);
       this.updateAssistantPhase(assistantMessageId, ChatMessagePhase.Sending, '发送中', 'request_start');
       this.statusText = `会话 ${this.shortenId(appConversationId)} 已连接，正在等待模型响应...`;
@@ -508,6 +1146,13 @@ struct Index {
       );
       this.answerVariantsByMessageId.clear();
       this.messages = this.buildHistoryMessages(historyMessages);
+      void this.refreshConversationList(false);
+      if (historyMessages.length > 0) {
+        const latestHistory: HiAgentHistoryMessage = historyMessages[historyMessages.length - 1];
+        const previewText: string = latestHistory.query.trim().length > 0 ? latestHistory.query : latestHistory.answer;
+        const titleText: string = latestHistory.query.trim().length > 0 ? latestHistory.query : previewText;
+        this.upsertConversationItem(this.conversationId, titleText, previewText, latestHistory.createdTime * 1000);
+      }
       this.statusText = historyMessages.length > 0 ? `已同步 ${historyMessages.length} 条历史记录。` : '当前会话还没有历史消息。';
       this.shouldAutoScrollToBottom = true;
       this.scrollToBottom(true);
@@ -862,6 +1507,8 @@ struct Index {
 
     const conversation = await HiAgentService.createConversation(config);
     this.conversationId = conversation.appConversationId;
+    this.upsertConversationItem(conversation.appConversationId, conversation.conversationName, '', Date.now());
+    void this.refreshConversationList(false);
     this.scheduleConfigSave();
     return conversation.appConversationId;
   }
@@ -1260,6 +1907,7 @@ struct Index {
       this.showToast('当前还没有有效的会话 ID');
       return;
     }
+    this.upsertConversationItem(appConversationId, '', sourceMessage.rawContent, Date.now());
 
     const regeneratedAssistantMessageId: string = this.createMessageId('assistant');
     const nextVariants: Array<ChatAnswerVariant> = this.cloneAnswerVariants(messageId);

@@ -6,15 +6,19 @@ import {
   HiAgentConfig,
   HiAgentConversation,
   HiAgentCreateConversationRequest,
+  HiAgentDeleteConversationRequest,
   HiAgentDeleteMessageRequest,
   HiAgentFeedbackRequest,
+  HiAgentGetConversationListRequest,
   HiAgentGetConversationMessagesRequest,
   HiAgentHistoryMessage,
   HiAgentMessageAnswerInfo,
   HiAgentQueryAgainRequest,
+  HiAgentSetConversationTopRequest,
   HiAgentSetMessageAnswerUsedRequest,
   HiAgentStopMessageRequest,
-  HiAgentStreamEvent
+  HiAgentStreamEvent,
+  HiAgentUpdateConversationRequest
 } from '../models/HiAgentModels';
 import { HiAgentSseParser } from '../utils/HiAgentSseParser';
 
@@ -81,8 +85,37 @@ export class HiAgentService {
 
     return new HiAgentConversation(
       appConversationId,
-      HiAgentService.readString(conversationObject, 'ConversationName')
+      HiAgentService.readString(conversationObject, 'ConversationName'),
+      HiAgentService.readString(conversationObject, 'CreateTime'),
+      HiAgentService.readString(conversationObject, 'LastChatTime'),
+      HiAgentService.readBoolean(conversationObject, 'EmptyConversation'),
+      HiAgentService.readNumber(conversationObject, 'CreateTimestamp'),
+      HiAgentService.readBoolean(conversationObject, 'IsPinned')
     );
+  }
+
+  static async getConversationList(config: HiAgentConfig): Promise<Array<HiAgentConversation>> {
+    const payload: ESObject = await HiAgentService.requestJson(
+      config,
+      '/get_conversation_list',
+      new HiAgentGetConversationListRequest(config.resolvedAppKey(), config.userId)
+    );
+
+    const conversationObjects: Array<ESObject> = HiAgentService.readObjectArray(payload, 'ConversationList');
+    const conversations: Array<HiAgentConversation> = [];
+    for (let index: number = 0; index < conversationObjects.length; index++) {
+      const item: ESObject = conversationObjects[index];
+      conversations.push(new HiAgentConversation(
+        HiAgentService.readString(item, 'AppConversationID'),
+        HiAgentService.readString(item, 'ConversationName'),
+        HiAgentService.readString(item, 'CreateTime'),
+        HiAgentService.readString(item, 'LastChatTime'),
+        HiAgentService.readBoolean(item, 'EmptyConversation'),
+        HiAgentService.readNumber(item, 'CreateTimestamp'),
+        HiAgentService.readBoolean(item, 'IsPinned')
+      ));
+    }
+    return conversations;
   }
 
   static async getConversationMessages(
@@ -141,6 +174,38 @@ export class HiAgentService {
       config,
       '/delete_message',
       new HiAgentDeleteMessageRequest(config.resolvedAppKey(), normalizedMessageId, '', config.userId)
+    );
+  }
+
+  static async updateConversation(config: HiAgentConfig, appConversationId: string, conversationName: string): Promise<void> {
+    await HiAgentService.requestJson(
+      config,
+      '/update_conversation',
+      new HiAgentUpdateConversationRequest(config.resolvedAppKey(), appConversationId.trim(), conversationName, config.userId)
+    );
+  }
+
+  static async deleteConversation(config: HiAgentConfig, appConversationId: string): Promise<void> {
+    await HiAgentService.requestJson(
+      config,
+      '/delete_conversation',
+      new HiAgentDeleteConversationRequest(config.resolvedAppKey(), appConversationId.trim(), config.userId)
+    );
+  }
+
+  static async setConversationTop(config: HiAgentConfig, appConversationId: string): Promise<void> {
+    await HiAgentService.requestJson(
+      config,
+      '/set_conversation_top',
+      new HiAgentSetConversationTopRequest(config.resolvedAppKey(), config.userId, appConversationId.trim())
+    );
+  }
+
+  static async cancelConversationTop(config: HiAgentConfig, appConversationId: string): Promise<void> {
+    await HiAgentService.requestJson(
+      config,
+      '/cancel_conversation_top',
+      new HiAgentSetConversationTopRequest(config.resolvedAppKey(), config.userId, appConversationId.trim())
     );
   }
 
@@ -425,6 +490,11 @@ export class HiAgentService {
   private static readNumber(source: ESObject, key: string): number {
     const value: Object = source[key];
     return typeof value === 'number' ? value : 0;
+  }
+
+  private static readBoolean(source: ESObject, key: string): boolean {
+    const value: Object = source[key];
+    return typeof value === 'boolean' ? value : false;
   }
 
   private static readObject(source: ESObject, key: string): ESObject {
