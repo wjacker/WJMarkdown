@@ -1762,6 +1762,10 @@ struct Index {
     if (existingVariants.length > 0) {
       this.syncMessageToActiveVariant(sourceMessage);
     }
+    if (existingVariants.length >= 10) {
+      this.showToast('最多只支持10次生成哦~');
+      return;
+    }
 
     const activeVariant: ChatAnswerVariant | null = this.getActiveAnswerVariant(sourceMessage);
     if (activeVariant === null || activeVariant.serviceMessageId.trim().length === 0) {
