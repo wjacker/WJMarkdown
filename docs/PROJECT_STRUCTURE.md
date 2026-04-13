@@ -15,8 +15,6 @@ WJMarkdown
 │   │   │   │   ├── components
 │   │   │   │   │   ├── ChatBubble.ets
 │   │   │   │   │   └── MarkdownMessage.ets
-│   │   │   │   ├── data
-│   │   │   │   │   └── ChatDemoData.ets
 │   │   │   │   ├── models
 │   │   │   │   │   ├── ChatModels.ets
 │   │   │   │   │   ├── CodeHighlightModels.ets
