@@ -1,0 +1,12 @@
+{
+  "routerMap": [
+    {
+      "name": "AgentIndexPage",
+      "pageSourceFile": "src/main/ets/pages/agent/Index.ets",
+      "buildFunction": "AgentIndexPageBuilder",
+      "data": {
+        "description": "Agent chat main page"
+      }
+    }
+  ]
+}

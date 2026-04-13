@@ -16,9 +16,13 @@ import { HiAgentService, HiAgentStreamSession } from './services/HiAgentService'
 import { AgentTextUtils } from './utils/AgentTextUtils';
 import { AgentVariantHelper } from './utils/AgentVariantHelper';
 
-@Entry
+@Builder
+export function AgentIndexPageBuilder() {
+  AgentIndexPage()
+}
+
 @Component
-struct Index {
+struct AgentIndexPage {
   @State private messages: Array<ChatMessage> = [];
   @State private draft: string = '请生成一段包含任务列表、代码块和表格的 Markdown 回复。';
   @State private apiUrl: string = '';
@@ -79,67 +83,70 @@ struct Index {
   }
 
   build() {
-    Stack({ alignContent: Alignment.TopStart }) {
-      Column({ space: 0 }) {
-        this.HeaderBuilder();
-        this.ConfigBuilder();
+    NavDestination() {
+      Stack({ alignContent: Alignment.TopStart }) {
+        Column({ space: 0 }) {
+          this.HeaderBuilder();
+          this.ConfigBuilder();
 
-        List({ space: 22, scroller: this.messageScroller }) {
-          if (this.shouldShowAgentPreviewCard()) {
-            ListItem() {
-              AgentPreviewCard({
-                preview: this.appConfigPreview
-              })
-              .padding({ top: 2, bottom: 6 })
+          List({ space: 22, scroller: this.messageScroller }) {
+            if (this.shouldShowAgentPreviewCard()) {
+              ListItem() {
+                AgentPreviewCard({
+                  preview: this.appConfigPreview
+                })
+                .padding({ top: 2, bottom: 6 })
+              }
             }
+
+            ForEach(this.messages, (message: ChatMessage) => {
+              ListItem() {
+                ChatBubble({
+                  message: message,
+                  isSpeaking: this.speakingMessageId === message.id,
+                })
+                .padding({ top: 2, bottom: 6 })
+              }
+            }, (message: ChatMessage) => message.id)
           }
-
-          ForEach(this.messages, (message: ChatMessage) => {
-            ListItem() {
-              ChatBubble({
-                message: message,
-                isSpeaking: this.speakingMessageId === message.id,
-              })
-              .padding({ top: 2, bottom: 6 })
+          .width('100%')
+          .layoutWeight(1)
+          .padding({ top: 14, right: 16, bottom: 20, left: 16 })
+          .backgroundColor('#F4F7FB')
+          .scrollBar(BarState.Off)
+          .onReachEnd(() => {
+            this.shouldAutoScrollToBottom = true;
+          })
+          .onDidScroll((_scrollOffset: number, scrollState: ScrollState) => {
+            if (scrollState === ScrollState.Scroll) {
+              this.shouldAutoScrollToBottom = this.safeIsAtEnd();
             }
-          }, (message: ChatMessage) => message.id)
-        }
-        .width('100%')
-        .layoutWeight(1)
-        .padding({ top: 14, right: 16, bottom: 20, left: 16 })
-        .backgroundColor('#F4F7FB')
-        .scrollBar(BarState.Off)
-        .onReachEnd(() => {
-          this.shouldAutoScrollToBottom = true;
-        })
-        .onDidScroll((_scrollOffset: number, scrollState: ScrollState) => {
-          if (scrollState === ScrollState.Scroll) {
+          })
+          .onScrollStop(() => {
             this.shouldAutoScrollToBottom = this.safeIsAtEnd();
-          }
-        })
-        .onScrollStop(() => {
-          this.shouldAutoScrollToBottom = this.safeIsAtEnd();
-        })
+          })
 
-        this.ComposerBuilder();
+          this.ComposerBuilder();
+        }
+        .height('100%')
+        .width('100%')
+        .backgroundColor('#E9EEF5')
+
+        if (this.isConversationDrawerVisible || this.isRenameDialogVisible) {
+          ConversationDrawer({
+            conversationItems: this.conversationItems,
+            selectedConversationId: this.conversationId,
+            activeConversationMenuId: this.activeConversationMenuId,
+            activeConversationMenuTop: this.activeConversationMenuTop,
+            renameDraft: this.renameDraft,
+            isRenameDialogVisible: this.isRenameDialogVisible
+          })
+        }
       }
       .height('100%')
       .width('100%')
-      .backgroundColor('#E9EEF5')
-
-      if (this.isConversationDrawerVisible || this.isRenameDialogVisible) {
-        ConversationDrawer({
-          conversationItems: this.conversationItems,
-          selectedConversationId: this.conversationId,
-          activeConversationMenuId: this.activeConversationMenuId,
-          activeConversationMenuTop: this.activeConversationMenuTop,
-          renameDraft: this.renameDraft,
-          isRenameDialogVisible: this.isRenameDialogVisible
-        })
-      }
     }
-    .height('100%')
-    .width('100%')
+    .hideTitleBar(true)
   }
 
   @Builder
