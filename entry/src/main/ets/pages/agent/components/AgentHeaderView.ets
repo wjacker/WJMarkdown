@@ -1,9 +1,9 @@
 import { HiAgentAppConfigPreview } from '../models/HiAgentModels';
-import { AgentPreviewActionDispatcher, AgentPreviewActionType } from './AgentPreviewActionDispatcher';
 
 @Component
-export struct AgentPreviewCard {
+export struct AgentHeaderView {
   @Prop preview: HiAgentAppConfigPreview = new HiAgentAppConfigPreview();
+  @Prop onSelectQuery: (query: string) => void = (_query: string): void => {};
 
   build() {
     Column({ space: 12 }) {
@@ -67,7 +67,7 @@ export struct AgentPreviewCard {
                 .padding({ top: 8, right: 14, bottom: 8, left: 14 })
                 .margin({ right: 10, bottom: 10 })
                 .onClick(() => {
-                  AgentPreviewActionDispatcher.dispatch(AgentPreviewActionType.SelectQuery, query);
+                  this.onSelectQuery(query);
                 })
             }, (query: string) => query)
           }

@@ -1,6 +1,5 @@
 import { ChatBubble } from './components/ChatBubble';
-import { AgentPreviewCard } from './components/AgentPreviewCard';
-import { AgentPreviewActionDispatcher, AgentPreviewActionType } from './components/AgentPreviewActionDispatcher';
+import { AgentHeaderView } from './components/AgentHeaderView';
 import { AgentChantInputView } from './components/AgentChantInputView';
 import { AgentChantInputViewActionDispatcher, AgentChantInputViewActionType } from './components/AgentChantInputViewActionDispatcher';
 import { ChatBubbleActionDispatcher, ChatBubbleActionType } from './components/ChatBubbleActionDispatcher';
@@ -72,9 +71,6 @@ struct AgentIndexPage {
       payload: string) => {
       this.handleConversationDrawerAction(action, conversationId, payload);
     });
-    AgentPreviewActionDispatcher.register((action: AgentPreviewActionType, payload: string) => {
-      this.handleAgentPreviewAction(action, payload);
-    });
     AgentChantInputViewActionDispatcher.register((action: AgentChantInputViewActionType) => {
       this.handleAgentChantInputViewAction(action);
     });
@@ -86,7 +82,6 @@ struct AgentIndexPage {
     this.applyKeyboardAvoidMode(KeyboardAvoidMode.OFFSET);
     ChatBubbleActionDispatcher.clear();
     ConversationDrawerActionDispatcher.clear();
-    AgentPreviewActionDispatcher.clear();
     AgentChantInputViewActionDispatcher.clear();
     this.flushConfigIfNeeded();
     AgentMessageManager.stopRevealTimer(this);
@@ -102,10 +97,13 @@ struct AgentIndexPage {
           this.ConfigBuilder();
 
           List({ space: 22, scroller: this.messageScroller }) {
-            if (this.shouldShowAgentPreviewCard()) {
+            if (this.shouldShowAgentHeaderView()) {
               ListItem() {
-                AgentPreviewCard({
-                  preview: this.appConfigPreview
+                AgentHeaderView({
+                  preview: this.appConfigPreview,
+                  onSelectQuery: (query: string): void => {
+                    this.handleAgentHeaderQuerySelect(query);
+                  }
                 })
                 .padding({ top: 2, bottom: 6 })
               }
@@ -522,18 +520,15 @@ struct AgentIndexPage {
     }
   }
 
-  private shouldShowAgentPreviewCard(): boolean {
+  private shouldShowAgentHeaderView(): boolean {
     return this.appConfigPreview.name.trim().length > 0 ||
       this.appConfigPreview.image.trim().length > 0 ||
       this.appConfigPreview.openMessage.trim().length > 0 ||
       this.appConfigPreview.openQuery.length > 0;
   }
 
-  private handleAgentPreviewAction(action: AgentPreviewActionType, payload: string): void {
-    if (action !== AgentPreviewActionType.SelectQuery) {
-      return;
-    }
-    const query: string = payload.trim();
+  private handleAgentHeaderQuerySelect(queryValue: string): void {
+    const query: string = queryValue.trim();
     if (query.length === 0) {
       return;
     }
