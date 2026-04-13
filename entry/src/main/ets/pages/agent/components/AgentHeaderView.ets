@@ -3,7 +3,7 @@ import { HiAgentAppConfigPreview } from '../models/HiAgentModels';
 @Component
 export struct AgentHeaderView {
   @Prop preview: HiAgentAppConfigPreview = new HiAgentAppConfigPreview();
-  @Prop onSelectQuery: (query: string) => void = (_query: string): void => {};
+  onSelectQuery?: (query: string) => void = undefined;
 
   build() {
     Column({ space: 12 }) {
@@ -67,7 +67,9 @@ export struct AgentHeaderView {
                 .padding({ top: 8, right: 14, bottom: 8, left: 14 })
                 .margin({ right: 10, bottom: 10 })
                 .onClick(() => {
-                  this.onSelectQuery(query);
+                  if(this.onSelectQuery) {
+                    this.onSelectQuery(query);
+                  }
                 })
             }, (query: string) => query)
           }
