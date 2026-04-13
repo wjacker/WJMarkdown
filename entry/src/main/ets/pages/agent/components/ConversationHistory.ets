@@ -1,7 +1,7 @@
 import { AgentConversationHelper, AgentConversationItem, AgentConversationSection } from '../models/ConversationModels';
 import { ConversationDrawerActionDispatcher, ConversationDrawerActionType } from './ConversationDrawerActionDispatcher';
 
-export class ConversationDrawerHelper {
+export class ConversationHistoryHelper {
   static buildSections(items: Array<AgentConversationItem>): Array<AgentConversationSection> {
     const sections: Array<AgentConversationSection> = [];
     const pinnedItems: Array<AgentConversationItem> = [];
@@ -44,14 +44,14 @@ export class ConversationDrawerHelper {
   static buildConversationSectionKey(section: AgentConversationSection): string {
     let key: string = `${section.title}:${section.items.length}`;
     for (let index: number = 0; index < section.items.length; index++) {
-      key += `|${ConversationDrawerHelper.buildConversationItemKey(section.items[index])}`;
+      key += `|${ConversationHistoryHelper.buildConversationItemKey(section.items[index])}`;
     }
     return key;
   }
 }
 
 @Component
-export struct ConversationDrawer {
+export struct ConversationHistory {
   @Prop conversationItems: Array<AgentConversationItem> = [];
   @Prop selectedConversationId: string = '';
   @Prop activeConversationMenuId: string = '';
@@ -112,7 +112,7 @@ export struct ConversationDrawer {
             } else {
               Stack({ alignContent: Alignment.TopStart }) {
                 List({ space: 12 }) {
-                  ForEach(ConversationDrawerHelper.buildSections(this.conversationItems),
+                  ForEach(ConversationHistoryHelper.buildSections(this.conversationItems),
                     (section: AgentConversationSection) => {
                       ListItem() {
                         Column({ space: 10 }) {
@@ -126,13 +126,13 @@ export struct ConversationDrawer {
                           Column({ space: 12 }) {
                             ForEach(section.items, (item: AgentConversationItem) => {
                               this.ConversationItemBuilder(item)
-                            }, (item: AgentConversationItem) => ConversationDrawerHelper.buildConversationItemKey(item))
+                            }, (item: AgentConversationItem) => ConversationHistoryHelper.buildConversationItemKey(item))
                           }
                           .width('100%')
                         }
                         .width('100%')
                       }
-                    }, (section: AgentConversationSection) => ConversationDrawerHelper.buildConversationSectionKey(section))
+                    }, (section: AgentConversationSection) => ConversationHistoryHelper.buildConversationSectionKey(section))
                 }
                 .width('100%')
                 .layoutWeight(1)

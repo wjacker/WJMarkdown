@@ -3,7 +3,7 @@ import { AgentHeaderView } from './components/AgentHeaderView';
 import { AgentChantInputView } from './components/AgentChantInputView';
 import { AgentChantInputViewActionDispatcher, AgentChantInputViewActionType } from './components/AgentChantInputViewActionDispatcher';
 import { ChatBubbleActionDispatcher, ChatBubbleActionType } from './components/ChatBubbleActionDispatcher';
-import { ConversationDrawer, ConversationDrawerHelper } from './components/ConversationDrawer';
+import { ConversationHistory, ConversationHistoryHelper } from './components/ConversationHistory';
 import { ConversationDrawerActionDispatcher, ConversationDrawerActionType } from './components/ConversationDrawerActionDispatcher';
 import pasteboard from '@ohos.pasteboard';
 import promptAction from '@ohos.promptAction';
@@ -148,7 +148,7 @@ struct AgentIndexPage {
         .backgroundColor('#FFFFFF')
 
         if (this.isConversationDrawerVisible || this.isRenameDialogVisible) {
-          ConversationDrawer({
+          ConversationHistory({
             conversationItems: this.conversationItems,
             selectedConversationId: this.conversationId,
             activeConversationMenuId: this.activeConversationMenuId,
@@ -696,7 +696,7 @@ struct AgentIndexPage {
       return 88;
     }
     let itemOffset: number = 0;
-    const sections = ConversationDrawerHelper.buildSections(this.conversationItems);
+    const sections = ConversationHistoryHelper.buildSections(this.conversationItems);
     for (let sectionIndex: number = 0; sectionIndex < sections.length; sectionIndex++) {
       itemOffset += 26;
       for (let itemIndex: number = 0; itemIndex < sections[sectionIndex].items.length; itemIndex++) {
