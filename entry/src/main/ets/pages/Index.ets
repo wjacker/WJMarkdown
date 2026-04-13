@@ -15,7 +15,7 @@ struct Index {
         return;
       }
       this.didPushAgentPage = true;
-      this.pageStack.pushPathByName('AgentIndexPage', undefined, false);
+      this.pageStack.pushPathByName('AgentDemoPage', undefined, false);
     })
   }
 }

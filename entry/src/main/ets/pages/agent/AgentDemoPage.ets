@@ -20,12 +20,12 @@ import { AgentSpeechManager } from './services/AgentSpeechManager';
 import { AgentTextUtils } from './utils/AgentTextUtils';
 
 @Builder
-export function AgentIndexPageBuilder() {
-  AgentIndexPage()
+export function AgentDemoPageBuilder() {
+  AgentDemoPage()
 }
 
 @Component
-struct AgentIndexPage {
+struct AgentDemoPage {
   @State messages: Array<ChatMessage> = [];
   @State draft: string = '请生成一段包含任务列表、代码块和表格的 Markdown 回复。';
   @State private apiUrl: string = '';
