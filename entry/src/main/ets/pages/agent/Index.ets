@@ -8,6 +8,7 @@ import pasteboard from '@ohos.pasteboard';
 import promptAction from '@ohos.promptAction';
 import preferences from '@ohos.data.preferences';
 import textToSpeech from '@hms.ai.textToSpeech';
+import { KeyboardAvoidMode } from '@ohos.arkui.UIContext';
 import { ChatAnswerVariant, ChatMessage, ChatMessagePhase, MessageFeedback, MessageRole } from './models/ChatModels';
 import { AgentConversationHelper, AgentConversationItem } from './models/ConversationModels';
 import { HiAgentAppConfigPreview, HiAgentConfig, HiAgentConversation, HiAgentEventHelper, HiAgentHistoryMessage, HiAgentMessageAnswerInfo, HiAgentStreamEvent } from './models/HiAgentModels';
@@ -42,6 +43,8 @@ struct AgentIndexPage {
   @State private renameConversationId: string = '';
   @State private renameDraft: string = '';
   @State private isRenameDialogVisible: boolean = false;
+  @State private isComposerExpanded: boolean = false;
+  @State private isComposerFocused: boolean = false;
 
   private messageScroller: Scroller = new Scroller();
   private configStore: preferences.Preferences | null = null;
@@ -58,6 +61,7 @@ struct AgentIndexPage {
   private pendingConversationTitleByMessageId: Map<string, string> = new Map();
 
   aboutToAppear(): void {
+    this.applyKeyboardAvoidMode(KeyboardAvoidMode.RESIZE);
     ChatBubbleActionDispatcher.register((messageId: string, action: ChatBubbleActionType) => {
       this.handleChatBubbleAction(messageId, action);
     });
@@ -73,6 +77,7 @@ struct AgentIndexPage {
   }
 
   aboutToDisappear(): void {
+    this.applyKeyboardAvoidMode(KeyboardAvoidMode.OFFSET);
     ChatBubbleActionDispatcher.clear();
     ConversationDrawerActionDispatcher.clear();
     AgentPreviewActionDispatcher.clear();
@@ -112,7 +117,7 @@ struct AgentIndexPage {
           .width('100%')
           .layoutWeight(1)
           .padding({ top: 14, right: 16, bottom: 20, left: 16 })
-          .backgroundColor('#F4F7FB')
+          .backgroundColor('#FFFFFF')
           .scrollBar(BarState.Off)
           .onReachEnd(() => {
             this.shouldAutoScrollToBottom = true;
@@ -130,7 +135,7 @@ struct AgentIndexPage {
         }
         .height('100%')
         .width('100%')
-        .backgroundColor('#E9EEF5')
+        .backgroundColor('#FFFFFF')
 
         if (this.isConversationDrawerVisible || this.isRenameDialogVisible) {
           ConversationDrawer({
@@ -324,51 +329,166 @@ struct AgentIndexPage {
 
   @Builder
   private ComposerBuilder() {
-    Column({ space: 12 }) {
-      TextInput({ text: this.draft, placeholder: '输入要发给 HiAgent 的问题...' })
-        .height(52)
-        .fontSize(14)
-        .backgroundColor('#FFFFFF')
-        .borderRadius(20)
-        .padding({ left: 14, right: 14 })
-        .onChange((value: string) => {
-          this.draft = value;
-        })
+    Column({ space: 8 }) {
+      Row() {
+        Column({ space: 10 }) {
+          if (this.shouldShowExpandedComposer()) {
+            TextArea({ text: this.draft, placeholder: '发消息...' })
+              .width('100%')
+              .id('agent-composer-expanded-input')
+              .backgroundColor(Color.Transparent)
+              .borderRadius(0)
+              .fontSize(16)
+              .fontColor('#0F172A')
+              .placeholderColor('#C0C8D4')
+              .maxLines(8)
+              .barState(BarState.Auto)
+              .defaultFocus(true)
+              .padding({ top: 0, right: 0, bottom: 0, left: 0 })
+              .onFocus(() => {
+                this.isComposerExpanded = true;
+                this.isComposerFocused = true;
+              })
+              .onBlur(() => {
+                this.isComposerFocused = false;
+                if (this.draft.trim().length === 0 && !this.isSending) {
+                  this.isComposerExpanded = false;
+                }
+              })
+              .onChange((value: string) => {
+                this.draft = value;
+                if (value.trim().length > 0) {
+                  this.isComposerExpanded = true;
+                }
+              })
 
-      Row({ space: 12 }) {
-        Button('Insert sample prompt')
-          .layoutWeight(1)
-          .height(46)
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#0F172A')
-          .backgroundColor('#FFFFFF')
-          .borderRadius(18)
-          .onClick(() => {
-            this.draft = '请生成一段 Markdown 回复，包含标题、任务列表、代码块、表格和总结。';
-          })
+            Row() {
+              Button() {
+                Image($r('app.media.icon_ai_voice'))
+                  .width(22)
+                  .height(22)
+                  .objectFit(ImageFit.Contain)
+              }
+              .width(28)
+              .height(28)
+              .backgroundColor(Color.Transparent)
+              .borderRadius(14)
+              .onClick(() => {
+                this.showToast('暂不支持语音输入');
+              })
 
-        Button(this.isSending ? '停止回复' : 'Send')
-          .layoutWeight(1)
-          .height(46)
-          .fontSize(14)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#FFFFFF')
-          .backgroundColor(this.isSending ? '#DC2626' : '#2563EB')
-          .borderRadius(18)
-          .onClick(() => {
-            if (this.isSending) {
-              this.stopActiveResponse();
-            } else {
-              this.sendPrompt();
+              Blank()
+
+              Button() {
+                Image(this.isSending ? $r('app.media.icon_ai_stop') : $r('app.media.icon_send'))
+                  .width(22)
+                  .height(22)
+                  .objectFit(ImageFit.Contain)
+                  .opacity(this.isSending || this.hasDraftContent() ? 1 : 0.35)
+              }
+              .width(28)
+              .height(28)
+              .backgroundColor(Color.Transparent)
+              .borderRadius(14)
+              .enabled(this.isSending || this.hasDraftContent())
+              .onClick(() => {
+                if (this.isSending) {
+                  this.stopActiveResponse();
+                  return;
+                }
+                if (!this.hasDraftContent()) {
+                  return;
+                }
+                this.sendPrompt();
+              })
             }
-          })
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+          } else {
+            Row({ space: 10 }) {
+              Button() {
+                Image($r('app.media.icon_ai_voice'))
+                  .width(22)
+                  .height(22)
+                  .objectFit(ImageFit.Contain)
+              }
+              .width(28)
+              .height(28)
+              .backgroundColor(Color.Transparent)
+              .borderRadius(14)
+              .onClick(() => {
+                this.showToast('暂不支持语音输入');
+              })
+
+              Text('发消息...')
+                .layoutWeight(1)
+                .fontSize(16)
+                .fontColor('#C0C8D4')
+                .textAlign(TextAlign.Start)
+
+              Button() {
+                Image($r('app.media.icon_send'))
+                  .width(22)
+                  .height(22)
+                  .objectFit(ImageFit.Contain)
+                  .opacity(0.35)
+              }
+              .width(28)
+              .height(28)
+              .backgroundColor(Color.Transparent)
+              .borderRadius(14)
+              .enabled(false)
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+            .onClick(() => {
+              this.isComposerExpanded = true;
+              this.isComposerFocused = true;
+              setTimeout(() => {
+                focusControl.requestFocus('agent-composer-expanded-input');
+              }, 50);
+            })
+          }
+        }
+        .width('100%')
+        .padding({ top: 14, right: 14, bottom: this.shouldShowExpandedComposer() ? 10 : 12, left: 14 })
       }
       .width('100%')
+      .backgroundColor('#FFFFFF')
+      .borderRadius(18)
+      .shadow({
+        radius: 20,
+        color: '#220F172A',
+        offsetX: 0,
+        offsetY: 8
+      })
+
+      if (!this.isComposerFocused) {
+        Text('内容由 AI 生成')
+          .fontSize(11)
+          .fontColor('#FFFFFF')
+          .textAlign(TextAlign.Center)
+          .width('100%')
+      }
     }
     .width('100%')
-    .padding({ top: 14, right: 16, bottom: 20, left: 16 })
-    .backgroundColor('#FFF7ED')
+    .padding({ top: 12, right: 16, bottom: this.shouldShowExpandedComposer() ? 8 : 20, left: 16 })
+    .backgroundColor('#FFFFFF')
+  }
+
+  private hasDraftContent(): boolean {
+    return this.draft.trim().length > 0;
+  }
+
+  private applyKeyboardAvoidMode(mode: KeyboardAvoidMode): void {
+    try {
+      this.getUIContext().setKeyboardAvoidMode(mode);
+    } catch (_error) {
+    }
+  }
+
+  private shouldShowExpandedComposer(): boolean {
+    return this.isComposerExpanded || this.hasDraftContent() || this.isSending;
   }
 
   private resolveAnswerVersionCount(message: ChatMessage): number {
