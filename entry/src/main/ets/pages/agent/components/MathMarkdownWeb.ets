@@ -18,6 +18,10 @@ export struct MathMarkdownWeb {
   private controllerAttached: boolean = false;
   private shellLoaded: boolean = false;
   private lastInjectedHtml: string = '';
+  private lastRenderAttemptHtml: string = '';
+  private injectRetryTimer: number = -1;
+  private injectRetryCount: number = 0;
+  private readonly maxInjectRetryCount: number = 6;
 
   aboutToAppear(): void {
     this.appendDebug(`aboutToAppear contentLength=${this.content.length}`);
@@ -28,6 +32,10 @@ export struct MathMarkdownWeb {
       this.webReady = false;
       this.appendDebug('initializeWebEngine failed');
     }
+  }
+
+  aboutToDisappear(): void {
+    this.clearInjectRetryTimer();
   }
 
   build() {
@@ -52,6 +60,7 @@ export struct MathMarkdownWeb {
         .visibility(this.showFallback ? Visibility.Hidden : Visibility.Visible)
         .onControllerAttached(() => {
           this.controllerAttached = true;
+          this.injectRetryCount = 0;
           this.appendDebug('onControllerAttached');
         })
         .onPageEnd(() => {
@@ -67,16 +76,21 @@ export struct MathMarkdownWeb {
   private async injectContentIfNeeded(): Promise<void> {
     if (!this.controllerAttached || !this.shellLoaded) {
       this.appendDebug('injectContentIfNeeded skipped: shell not ready');
+      this.scheduleInjectRetry();
       return;
     }
 
     const html: string = MarkdownHtmlRenderer.render(this.content);
-    if (html === this.lastInjectedHtml) {
+    if (html !== this.lastRenderAttemptHtml) {
+      this.lastRenderAttemptHtml = html;
+      this.lastInjectedHtml = '';
+      this.injectRetryCount = 0;
+    }
+    if (html === this.lastInjectedHtml && this.webReady && !this.showFallback) {
       this.appendDebug('injectContentIfNeeded skipped: html unchanged');
       return;
     }
 
-    this.lastInjectedHtml = html;
     this.webReady = false;
     this.showFallback = true;
     this.appendDebug(`injectContentIfNeeded start htmlLength=${html.length}`);
@@ -137,11 +151,43 @@ export struct MathMarkdownWeb {
       let shouldShowWeb: boolean = this.shouldTreatAsReady(injectDiagnostics, shellDiagnostics);
       this.webReady = shouldShowWeb;
       this.showFallback = !shouldShowWeb;
+      if (shouldShowWeb) {
+        this.lastInjectedHtml = html;
+      }
       this.appendDebug(`injectContentIfNeeded webReady=${this.webReady} showFallback=${this.showFallback}`);
+      if (shouldShowWeb) {
+        this.clearInjectRetryTimer();
+        this.injectRetryCount = 0;
+      } else {
+        this.scheduleInjectRetry();
+      }
     } catch (_error) {
       this.webReady = false;
       this.showFallback = true;
       this.appendDebug('injectContentIfNeeded threw exception');
+      this.scheduleInjectRetry();
+    }
+  }
+
+  private scheduleInjectRetry(): void {
+    if (this.injectRetryCount >= this.maxInjectRetryCount) {
+      this.appendDebug(`scheduleInjectRetry skipped: reached max retry ${this.maxInjectRetryCount}`);
+      return;
+    }
+    this.clearInjectRetryTimer();
+    this.injectRetryCount++;
+    const currentRetry: number = this.injectRetryCount;
+    this.injectRetryTimer = setTimeout(() => {
+      this.injectRetryTimer = -1;
+      this.appendDebug(`scheduleInjectRetry trigger retry=${currentRetry}`);
+      void this.injectContentIfNeeded();
+    }, 180) as number;
+  }
+
+  private clearInjectRetryTimer(): void {
+    if (this.injectRetryTimer >= 0) {
+      clearTimeout(this.injectRetryTimer);
+      this.injectRetryTimer = -1;
     }
   }
 
