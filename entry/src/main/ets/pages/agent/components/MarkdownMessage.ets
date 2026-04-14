@@ -21,10 +21,12 @@ export struct MarkdownMessage {
   build() {
     Column({ space: 12 }) {
       if (this.shouldUseWebMathRenderer()) {
-        MathMarkdownWeb({
-          content: this.content,
-          isAssistant: this.isAssistant
-        })
+        ForEach([this.buildMathRendererToken()], (_token: string) => {
+          MathMarkdownWeb({
+            content: this.content,
+            isAssistant: this.isAssistant
+          })
+        }, (token: string) => token)
       } else {
         this.BlocksBuilder(MarkdownParser.parse(this.content), 0)
 
@@ -43,6 +45,10 @@ export struct MarkdownMessage {
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
+  }
+
+  private buildMathRendererToken(): string {
+    return `${this.content.length}:${this.isStreaming ? '1' : '0'}:${this.content}`;
   }
 
   private shouldUseWebMathRenderer(): boolean {

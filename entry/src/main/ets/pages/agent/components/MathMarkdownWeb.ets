@@ -31,7 +31,7 @@ export struct MathMarkdownWeb {
   }
 
   build() {
-    Column({ space: 10 }) {
+    Stack({ alignContent: Alignment.TopStart }) {
       if (this.showFallback) {
         Text(this.content)
           .width('100%')
