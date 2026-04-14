@@ -139,7 +139,7 @@ export struct AgentChantInputView {
       })
 
       if (!this.isComposerFocused) {
-        Text('内容由 AI 生成')
+        Text('内容由AI生成, 仅供参考')
           .fontSize(11)
           .fontColor('#D0D3DF')
           .textAlign(TextAlign.Center)

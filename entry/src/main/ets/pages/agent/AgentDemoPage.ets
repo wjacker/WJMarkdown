@@ -10,7 +10,7 @@ import promptAction from '@ohos.promptAction';
 import preferences from '@ohos.data.preferences';
 import textToSpeech from '@hms.ai.textToSpeech';
 import { KeyboardAvoidMode } from '@ohos.arkui.UIContext';
-import { ChatAnswerVariant, ChatMessage, MessageFeedback } from './models/ChatModels';
+import { AgentAnswer, ChatMessage, MessageFeedback } from './models/ChatModels';
 import { AgentConversationHelper, AgentConversationItem } from './models/ConversationModels';
 import { HiAgentAppConfigPreview, HiAgentConfig, HiAgentConversation } from './models/HiAgentModels';
 import { AgentConfigStore, AgentStoredConfig } from './services/AgentConfigStore';
@@ -59,7 +59,7 @@ struct AgentDemoPage {
   activeStreamSession: HiAgentStreamSession | null = null;
   serviceConversationId: string = '';
   ttsEngine: textToSpeech.TextToSpeechEngine | null = null;
-  answerVariantsByMessageId: Map<string, Array<ChatAnswerVariant>> = new Map();
+  answersByMessageId: Map<string, Array<AgentAnswer>> = new Map();
   pendingConversationTitleByMessageId: Map<string, string> = new Map();
 
   aboutToAppear(): void {
@@ -389,11 +389,11 @@ struct AgentDemoPage {
       return;
     }
     if (action === ChatBubbleActionType.Previous) {
-      void AgentMessageManager.switchAnswerVariant(this, messageId, -1);
+      void AgentMessageManager.switchAnswer(this, messageId, -1);
       return;
     }
     if (action === ChatBubbleActionType.Next) {
-      void AgentMessageManager.switchAnswerVariant(this, messageId, 1);
+      void AgentMessageManager.switchAnswer(this, messageId, 1);
     }
   }
 
@@ -452,7 +452,7 @@ struct AgentDemoPage {
     AgentMessageManager.stopRevealTimer(this);
     AgentMessageManager.closeActiveSession(this);
     AgentSpeechManager.stopSpeakingMessage(this, false);
-    this.answerVariantsByMessageId.clear();
+    this.answersByMessageId.clear();
     this.conversationId = '';
     this.serviceConversationId = '';
     this.isSending = false;
@@ -725,7 +725,7 @@ struct AgentDemoPage {
     if (this.conversationId === appConversationId) {
       return;
     }
-    this.answerVariantsByMessageId.clear();
+    this.answersByMessageId.clear();
     this.messages = AgentMessageManager.buildGuideMessages((prefix: string): string => {
       return this.createMessageId(prefix);
     });

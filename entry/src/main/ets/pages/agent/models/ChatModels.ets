@@ -19,7 +19,7 @@ export enum MessageFeedback {
   Dislike = 'dislike'
 }
 
-export class ChatAnswerVariant {
+export class AgentAnswer {
   id: string;
   rawContent: string;
   visibleContent: string;
@@ -48,18 +48,18 @@ export class ChatAnswerVariant {
     this.lastEvent = '';
   }
 
-  copy(): ChatAnswerVariant {
-    const nextVariant: ChatAnswerVariant = new ChatAnswerVariant(this.id, this.rawContent, this.visibleContent);
-    nextVariant.serviceMessageId = this.serviceMessageId;
-    nextVariant.taskId = this.taskId;
-    nextVariant.createdAt = this.createdAt;
-    nextVariant.feedback = this.feedback;
-    nextVariant.isStreaming = this.isStreaming;
-    nextVariant.streamCompleted = this.streamCompleted;
-    nextVariant.streamPhase = this.streamPhase;
-    nextVariant.statusLabel = this.statusLabel;
-    nextVariant.lastEvent = this.lastEvent;
-    return nextVariant;
+  copy(): AgentAnswer {
+    const nextVersion: AgentAnswer = new AgentAnswer(this.id, this.rawContent, this.visibleContent);
+    nextVersion.serviceMessageId = this.serviceMessageId;
+    nextVersion.taskId = this.taskId;
+    nextVersion.createdAt = this.createdAt;
+    nextVersion.feedback = this.feedback;
+    nextVersion.isStreaming = this.isStreaming;
+    nextVersion.streamCompleted = this.streamCompleted;
+    nextVersion.streamPhase = this.streamPhase;
+    nextVersion.statusLabel = this.statusLabel;
+    nextVersion.lastEvent = this.lastEvent;
+    return nextVersion;
   }
 }
 
@@ -80,8 +80,8 @@ export class ChatMessage {
   taskId: string;
   createdAt: number;
   feedback: MessageFeedback;
-  answerVersionCount: number;
-  activeAnswerVersionIndex: number;
+  answerCount: number;
+  activeAnswerIndex: number;
   showActions: boolean;
 
   constructor(
@@ -107,8 +107,8 @@ export class ChatMessage {
     this.taskId = '';
     this.createdAt = Date.now();
     this.feedback = MessageFeedback.None;
-    this.answerVersionCount = 0;
-    this.activeAnswerVersionIndex = 0;
+    this.answerCount = 0;
+    this.activeAnswerIndex = 0;
     this.showActions = false;
   }
 
@@ -145,8 +145,8 @@ export class ChatMessage {
     nextMessage.taskId = this.taskId;
     nextMessage.createdAt = this.createdAt;
     nextMessage.feedback = this.feedback;
-    nextMessage.answerVersionCount = this.answerVersionCount;
-    nextMessage.activeAnswerVersionIndex = this.activeAnswerVersionIndex;
+    nextMessage.answerCount = this.answerCount;
+    nextMessage.activeAnswerIndex = this.activeAnswerIndex;
     nextMessage.showActions = this.showActions;
     return nextMessage;
   }

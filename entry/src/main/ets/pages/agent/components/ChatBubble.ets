@@ -35,7 +35,7 @@ struct ChatBubbleContentArea {
 
   private buildContentToken(): string {
     return `${this.message.visibleContent.length}-${this.message.rawContent.length}` +
-      `-${this.message.activeAnswerVersionIndex}-${this.message.isStreaming ? '1' : '0'}`;
+      `-${this.message.activeAnswerIndex}-${this.message.isStreaming ? '1' : '0'}`;
   }
 }
 
@@ -94,29 +94,29 @@ struct ChatBubbleActionArea {
 
         Blank()
 
-        if (this.message.answerVersionCount > 1) {
+        if (this.message.answerCount > 1) {
           Row({ space: 4 }) {
             Button() {
               Image($r('app.media.icon_ai_previous'))
                 .width(ChatBubbleActionArea.ACTION_ICON_SIZE)
                 .height(ChatBubbleActionArea.ACTION_ICON_SIZE)
                 .objectFit(ImageFit.Contain)
-                .opacity(this.message.activeAnswerVersionIndex > 0 ? 1 : 0.45)
+                .opacity(this.message.activeAnswerIndex > 0 ? 1 : 0.45)
             }
               .width(ChatBubbleActionArea.ACTION_BUTTON_SIZE)
               .height(ChatBubbleActionArea.ACTION_BUTTON_SIZE)
               .backgroundColor('#00000000')
               .borderRadius(ChatBubbleActionArea.ACTION_BUTTON_RADIUS)
               .padding(0)
-              .enabled(this.message.activeAnswerVersionIndex > 0)
+              .enabled(this.message.activeAnswerIndex > 0)
               .onClick(() => {
-                if (this.message.activeAnswerVersionIndex <= 0) {
+                if (this.message.activeAnswerIndex <= 0) {
                   return;
                 }
                 ChatBubbleActionDispatcher.dispatch(this.message.id, ChatBubbleActionType.Previous);
               })
 
-            Text(`${this.message.activeAnswerVersionIndex + 1}/${this.message.answerVersionCount}`)
+            Text(`${this.message.activeAnswerIndex + 1}/${this.message.answerCount}`)
               .fontSize(10)
               .fontWeight(FontWeight.Medium)
               .fontColor('#64748B')
@@ -126,16 +126,16 @@ struct ChatBubbleActionArea {
                 .width(ChatBubbleActionArea.ACTION_ICON_SIZE)
                 .height(ChatBubbleActionArea.ACTION_ICON_SIZE)
                 .objectFit(ImageFit.Contain)
-                .opacity(this.message.activeAnswerVersionIndex + 1 < this.message.answerVersionCount ? 1 : 0.45)
+                .opacity(this.message.activeAnswerIndex + 1 < this.message.answerCount ? 1 : 0.45)
             }
               .width(ChatBubbleActionArea.ACTION_BUTTON_SIZE)
               .height(ChatBubbleActionArea.ACTION_BUTTON_SIZE)
               .backgroundColor('#00000000')
               .borderRadius(ChatBubbleActionArea.ACTION_BUTTON_RADIUS)
               .padding(0)
-              .enabled(this.message.activeAnswerVersionIndex + 1 < this.message.answerVersionCount)
+              .enabled(this.message.activeAnswerIndex + 1 < this.message.answerCount)
               .onClick(() => {
-                if (this.message.activeAnswerVersionIndex + 1 >= this.message.answerVersionCount) {
+                if (this.message.activeAnswerIndex + 1 >= this.message.answerCount) {
                   return;
                 }
                 ChatBubbleActionDispatcher.dispatch(this.message.id, ChatBubbleActionType.Next);
@@ -163,8 +163,8 @@ struct ChatBubbleActionArea {
   }
 
   private buildActionToken(): string {
-    return `${this.message.showActions}-${this.message.feedback}-${this.message.activeAnswerVersionIndex}` +
-      `-${this.message.answerVersionCount}-${this.isSpeaking}`;
+    return `${this.message.showActions}-${this.message.feedback}-${this.message.activeAnswerIndex}` +
+      `-${this.message.answerCount}-${this.isSpeaking}`;
   }
 
   @Builder

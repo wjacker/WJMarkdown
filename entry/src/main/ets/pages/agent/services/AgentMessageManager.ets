@@ -1,8 +1,8 @@
-import { ChatAnswerVariant, ChatMessage, ChatMessagePhase, MessageFeedback, MessageRole } from '../models/ChatModels';
+import { AgentAnswer, ChatMessage, ChatMessagePhase, MessageFeedback, MessageRole } from '../models/ChatModels';
 import { HiAgentConfig, HiAgentEventHelper, HiAgentHistoryMessage, HiAgentMessageAnswerInfo, HiAgentStreamEvent } from '../models/HiAgentModels';
 import { HiAgentService, HiAgentStreamSession } from './HiAgentService';
 import { AgentTextUtils } from '../utils/AgentTextUtils';
-import { AgentVariantHelper } from '../utils/AgentVariantHelper';
+import { AgentAnswerHelper } from '../utils/AgentAnswerHelper';
 
 export interface AgentMessageManagerHost {
   messages: Array<ChatMessage>;
@@ -14,7 +14,7 @@ export interface AgentMessageManagerHost {
   activeAssistantMessageId: string;
   activeStreamSession: HiAgentStreamSession | null;
   serviceConversationId: string;
-  answerVariantsByMessageId: Map<string, Array<ChatAnswerVariant>>;
+  answersByMessageId: Map<string, Array<AgentAnswer>>;
   pendingConversationTitleByMessageId: Map<string, string>;
   messageScroller: Scroller;
   revealTimer: number;
@@ -93,11 +93,11 @@ export class AgentMessageManager {
     assistantMessage.streamCompleted = false;
     AgentMessageManager.applyMessagePhase(assistantMessage, ChatMessagePhase.Sending, '发送中');
     AgentMessageManager.syncMessageUiState(assistantMessage);
-    const initialVariants: Array<ChatAnswerVariant> = [
-      AgentMessageManager.createAnswerVariantFromMessage(host, assistantMessage)
+    const initialVariants: Array<AgentAnswer> = [
+      AgentMessageManager.createAnswerFromMessage(host, assistantMessage)
     ];
-    AgentMessageManager.replaceAnswerVariants(host, assistantMessage.id, initialVariants);
-    AgentMessageManager.applyAnswerVariantMeta(assistantMessage, initialVariants);
+    AgentMessageManager.replaceAnswers(host, assistantMessage.id, initialVariants);
+    AgentMessageManager.applyAnswerMeta(assistantMessage, initialVariants);
     nextMessages.push(assistantMessage);
 
     host.messages = nextMessages;
@@ -171,7 +171,7 @@ export class AgentMessageManager {
         host.conversationId,
         100
       );
-      host.answerVariantsByMessageId.clear();
+      host.answersByMessageId.clear();
       host.messages = AgentMessageManager.buildHistoryMessages(host, historyMessages);
       if (historyMessages.length > 0) {
         const latestHistory: HiAgentHistoryMessage = historyMessages[historyMessages.length - 1];
@@ -312,12 +312,12 @@ export class AgentMessageManager {
         assistantMessage.serviceMessageId = historyMessage.messageId;
         assistantMessage.taskId = historyMessage.taskId;
         assistantMessage.createdAt = historyMessage.createdTime * 1000;
-        const variants: Array<ChatAnswerVariant> = AgentMessageManager.buildVariantsFromHistoryMessage(host, historyMessage);
-        AgentMessageManager.replaceAnswerVariants(host, assistantMessage.id, variants);
-        AgentMessageManager.applyAnswerVariantMeta(assistantMessage, variants);
-        assistantMessage.answerVersionCount = variants.length;
-        assistantMessage.activeAnswerVersionIndex = variants.length > 0 ? variants.length - 1 : 0;
-        AgentMessageManager.applyActiveVariantToMessage(host, assistantMessage);
+        const variants: Array<AgentAnswer> = AgentMessageManager.buildAnswersFromHistoryMessage(host, historyMessage);
+        AgentMessageManager.replaceAnswers(host, assistantMessage.id, variants);
+        AgentMessageManager.applyAnswerMeta(assistantMessage, variants);
+        assistantMessage.answerCount = variants.length;
+        assistantMessage.activeAnswerIndex = variants.length > 0 ? variants.length - 1 : 0;
+        AgentMessageManager.applyActiveAnswerToMessage(host, assistantMessage);
         AgentMessageManager.syncMessageUiState(assistantMessage);
         nextMessages.push(assistantMessage);
       }
@@ -415,17 +415,17 @@ export class AgentMessageManager {
     const pairedUserMessageIndex: number = AgentMessageManager.findPairedUserMessageIndex(host, messageIndex);
     const pairedUserMessage: ChatMessage | null = pairedUserMessageIndex >= 0 ? host.messages[pairedUserMessageIndex].copy() : null;
     const sourceMessage: ChatMessage = host.messages[messageIndex].copy();
-    const existingVariants: Array<ChatAnswerVariant> = AgentMessageManager.ensureAnswerVariants(host, sourceMessage);
-    if (existingVariants.length > 0) {
-      AgentMessageManager.syncMessageToActiveVariant(host, sourceMessage);
+    const existingVersions: Array<AgentAnswer> = AgentMessageManager.ensureAnswers(host, sourceMessage);
+    if (existingVersions.length > 0) {
+      AgentMessageManager.syncMessageToActiveAnswer(host, sourceMessage);
     }
-    if (existingVariants.length >= 10) {
+    if (existingVersions.length >= 10) {
       host.showToast('最多只支持10次生成哦~');
       return;
     }
 
-    const activeVariant: ChatAnswerVariant | null = AgentMessageManager.getActiveAnswerVariant(host, sourceMessage);
-    if (activeVariant === null || activeVariant.serviceMessageId.trim().length === 0) {
+    const activeVersion: AgentAnswer | null = AgentMessageManager.getActiveAnswer(host, sourceMessage);
+    if (activeVersion === null || activeVersion.serviceMessageId.trim().length === 0) {
       host.showToast('当前回复还没有可重新回答的 messageId');
       return;
     }
@@ -437,25 +437,25 @@ export class AgentMessageManager {
     host.upsertConversationItem(appConversationId, '', sourceMessage.rawContent, Date.now());
 
     const regeneratedAssistantMessageId: string = host.createMessageId('assistant');
-    const nextVariants: Array<ChatAnswerVariant> = AgentMessageManager.cloneAnswerVariants(host, messageId);
-    const pendingVariant: ChatAnswerVariant = AgentMessageManager.buildPendingQueryAgainVariant(host, regeneratedAssistantMessageId);
-    pendingVariant.serviceMessageId = activeVariant.serviceMessageId;
-    pendingVariant.taskId = activeVariant.taskId;
-    nextVariants.push(pendingVariant);
-    host.answerVariantsByMessageId.delete(messageId);
-    AgentMessageManager.replaceAnswerVariants(host, regeneratedAssistantMessageId, nextVariants);
+    const nextVersions: Array<AgentAnswer> = AgentMessageManager.cloneAnswers(host, messageId);
+    const pendingVersion: AgentAnswer = AgentMessageManager.buildPendingAnswerForRetry(host, regeneratedAssistantMessageId);
+    pendingVersion.serviceMessageId = activeVersion.serviceMessageId;
+    pendingVersion.taskId = activeVersion.taskId;
+    nextVersions.push(pendingVersion);
+    host.answersByMessageId.delete(messageId);
+    AgentMessageManager.replaceAnswers(host, regeneratedAssistantMessageId, nextVersions);
 
-    sourceMessage.activeAnswerVersionIndex = nextVariants.length - 1;
+    sourceMessage.activeAnswerIndex = nextVersions.length - 1;
     sourceMessage.id = regeneratedAssistantMessageId;
-    AgentMessageManager.applyActiveVariantToMessage(host, sourceMessage);
+    AgentMessageManager.applyActiveAnswerToMessage(host, sourceMessage);
     sourceMessage.conversationId = appConversationId;
     sourceMessage.queryId = '';
-    sourceMessage.serviceMessageId = activeVariant.serviceMessageId;
-    sourceMessage.taskId = activeVariant.taskId;
+    sourceMessage.serviceMessageId = activeVersion.serviceMessageId;
+    sourceMessage.taskId = activeVersion.taskId;
     sourceMessage.rawContent = '';
     sourceMessage.visibleContent = '';
     sourceMessage.feedback = MessageFeedback.None;
-    sourceMessage.createdAt = pendingVariant.createdAt;
+    sourceMessage.createdAt = pendingVersion.createdAt;
     AgentMessageManager.syncMessageUiState(sourceMessage);
 
     const nextMessages: Array<ChatMessage> = host.messages.slice();
@@ -479,7 +479,7 @@ export class AgentMessageManager {
     host.activeStreamSession = HiAgentService.startQueryAgainStream(
       config,
       appConversationId,
-      activeVariant.serviceMessageId,
+      activeVersion.serviceMessageId,
       (event: HiAgentStreamEvent) => {
         AgentMessageManager.handleStreamEvent(host, regeneratedAssistantMessageId, event);
       },
@@ -505,23 +505,23 @@ export class AgentMessageManager {
     }
 
     const hydratedMessage: ChatMessage = host.messages[messageIndex].copy();
-    AgentMessageManager.applyActiveVariantToMessage(host, hydratedMessage);
-    const activeVariant: ChatAnswerVariant | null = AgentMessageManager.getActiveAnswerVariant(host, hydratedMessage);
-    if (activeVariant === null || activeVariant.serviceMessageId.trim().length === 0) {
+    AgentMessageManager.applyActiveAnswerToMessage(host, hydratedMessage);
+    const activeVersion: AgentAnswer | null = AgentMessageManager.getActiveAnswer(host, hydratedMessage);
+    if (activeVersion === null || activeVersion.serviceMessageId.trim().length === 0) {
       host.showToast('当前回复缺少删除所需的 messageId');
       return;
     }
 
     try {
-      await HiAgentService.deleteMessage(config, activeVariant.serviceMessageId);
+      await HiAgentService.deleteMessage(config, activeVersion.serviceMessageId);
       if (host.speakingMessageId === messageId) {
         host.stopSpeakingMessage(false);
       }
 
-      const nextVariants: Array<ChatAnswerVariant> = AgentMessageManager.cloneAnswerVariants(host, messageId);
-      nextVariants.splice(hydratedMessage.activeAnswerVersionIndex, 1);
-      if (nextVariants.length === 0) {
-        host.answerVariantsByMessageId.delete(messageId);
+      const nextVersions: Array<AgentAnswer> = AgentMessageManager.cloneAnswers(host, messageId);
+      nextVersions.splice(hydratedMessage.activeAnswerIndex, 1);
+      if (nextVersions.length === 0) {
+        host.answersByMessageId.delete(messageId);
         const nextMessages: Array<ChatMessage> = host.messages.slice();
         const pairedUserMessageIndex: number = AgentMessageManager.findPairedUserMessageIndex(host, messageIndex);
         nextMessages.splice(messageIndex, 1);
@@ -531,11 +531,11 @@ export class AgentMessageManager {
         host.messages = nextMessages;
         host.statusText = pairedUserMessageIndex >= 0 ? '已删除当前问答。' : '已删除当前回复。';
       } else {
-        const fallbackIndex: number = Math.min(hydratedMessage.activeAnswerVersionIndex, nextVariants.length - 1);
-        AgentMessageManager.replaceAnswerVariants(host, messageId, nextVariants);
+        const fallbackIndex: number = Math.min(hydratedMessage.activeAnswerIndex, nextVersions.length - 1);
+        AgentMessageManager.replaceAnswers(host, messageId, nextVersions);
         const nextMessage: ChatMessage = hydratedMessage.copy();
-        nextMessage.activeAnswerVersionIndex = fallbackIndex;
-        AgentMessageManager.applyActiveVariantToMessage(host, nextMessage);
+        nextMessage.activeAnswerIndex = fallbackIndex;
+        AgentMessageManager.applyActiveAnswerToMessage(host, nextMessage);
         AgentMessageManager.applyMessageToList(host, messageIndex, nextMessage);
         host.statusText = '已删除当前回复。';
       }
@@ -559,15 +559,15 @@ export class AgentMessageManager {
     }
 
     const nextMessage: ChatMessage = host.messages[messageIndex].copy();
-    const activeVariant: ChatAnswerVariant | null = AgentMessageManager.getActiveAnswerVariant(host, nextMessage);
-    if (activeVariant === null || activeVariant.serviceMessageId.trim().length === 0) {
+    const activeVersion: AgentAnswer | null = AgentMessageManager.getActiveAnswer(host, nextMessage);
+    if (activeVersion === null || activeVersion.serviceMessageId.trim().length === 0) {
       host.showToast('当前回复还没有可反馈的 messageId');
       return;
     }
 
     const targetFeedback: MessageFeedback = nextMessage.feedback === nextFeedback ? MessageFeedback.None : nextFeedback;
     try {
-      await HiAgentService.feedback(config, activeVariant.serviceMessageId, AgentVariantHelper.toLikeType(targetFeedback));
+      await HiAgentService.feedback(config, activeVersion.serviceMessageId, AgentAnswerHelper.toLikeType(targetFeedback));
       nextMessage.feedback = targetFeedback;
       AgentMessageManager.applyMessageToList(host, messageIndex, nextMessage);
 
@@ -586,28 +586,28 @@ export class AgentMessageManager {
     }
   }
 
-  static async switchAnswerVariant(host: AgentMessageManagerHost, messageId: string, offset: number): Promise<void> {
+  static async switchAnswer(host: AgentMessageManagerHost, messageId: string, offset: number): Promise<void> {
     const messageIndex: number = AgentMessageManager.findMessageIndex(host, messageId);
     if (messageIndex < 0) {
       return;
     }
 
     const hydratedMessage: ChatMessage = host.messages[messageIndex].copy();
-    const variants: Array<ChatAnswerVariant> = AgentMessageManager.cloneAnswerVariants(host, messageId);
+    const variants: Array<AgentAnswer> = AgentMessageManager.cloneAnswers(host, messageId);
     if (variants.length <= 1) {
       host.showToast('当前只有一个回复版本');
       return;
     }
 
-    const nextIndex: number = hydratedMessage.activeAnswerVersionIndex + offset;
+    const nextIndex: number = hydratedMessage.activeAnswerIndex + offset;
     if (nextIndex < 0 || nextIndex >= variants.length) {
       return;
     }
 
     const optimisticMessage: ChatMessage = hydratedMessage.copy();
-    optimisticMessage.activeAnswerVersionIndex = nextIndex;
-    optimisticMessage.answerVersionCount = variants.length;
-    AgentMessageManager.applyActiveVariantToMessage(host, optimisticMessage);
+    optimisticMessage.activeAnswerIndex = nextIndex;
+    optimisticMessage.answerCount = variants.length;
+    AgentMessageManager.applyActiveAnswerToMessage(host, optimisticMessage);
     AgentMessageManager.applyMessageToList(host, messageIndex, optimisticMessage);
     host.statusText = `已切换到第 ${nextIndex + 1}/${variants.length} 个回复。`;
   }
@@ -633,64 +633,64 @@ export class AgentMessageManager {
     return -1;
   }
 
-  private static ensureAnswerVariants(host: AgentMessageManagerHost, message: ChatMessage): Array<ChatAnswerVariant> {
-    const existingVariants: Array<ChatAnswerVariant> | undefined = host.answerVariantsByMessageId.get(message.id);
-    if (existingVariants !== undefined) {
-      AgentMessageManager.applyAnswerVariantMeta(message, existingVariants);
-      return existingVariants;
+  private static ensureAnswers(host: AgentMessageManagerHost, message: ChatMessage): Array<AgentAnswer> {
+    const existingVersions: Array<AgentAnswer> | undefined = host.answersByMessageId.get(message.id);
+    if (existingVersions !== undefined) {
+      AgentMessageManager.applyAnswerMeta(message, existingVersions);
+      return existingVersions;
     }
 
     if (message.role !== MessageRole.Assistant) {
       return [];
     }
 
-    const variants: Array<ChatAnswerVariant> = [AgentMessageManager.createAnswerVariantFromMessage(host, message)];
-    host.answerVariantsByMessageId.set(message.id, variants);
-    AgentMessageManager.applyAnswerVariantMeta(message, variants);
+    const variants: Array<AgentAnswer> = [AgentMessageManager.createAnswerFromMessage(host, message)];
+    host.answersByMessageId.set(message.id, variants);
+    AgentMessageManager.applyAnswerMeta(message, variants);
     return variants;
   }
 
-  private static createAnswerVariantFromMessage(host: AgentMessageManagerHost, message: ChatMessage): ChatAnswerVariant {
-    return AgentVariantHelper.createAnswerVariantFromMessage(
+  private static createAnswerFromMessage(host: AgentMessageManagerHost, message: ChatMessage): AgentAnswer {
+    return AgentAnswerHelper.createAnswerFromMessage(
       message,
       host.createMessageId(`variant-${message.id}`)
     );
   }
 
-  private static applyAnswerVariantMeta(message: ChatMessage, variants: Array<ChatAnswerVariant>): void {
-    AgentVariantHelper.applyAnswerVariantMeta(message, variants);
+  private static applyAnswerMeta(message: ChatMessage, variants: Array<AgentAnswer>): void {
+    AgentAnswerHelper.applyAnswerMeta(message, variants);
   }
 
-  private static syncMessageToActiveVariant(host: AgentMessageManagerHost, message: ChatMessage): void {
+  private static syncMessageToActiveAnswer(host: AgentMessageManagerHost, message: ChatMessage): void {
     if (message.role !== MessageRole.Assistant) {
       return;
     }
 
-    const variants: Array<ChatAnswerVariant> = AgentMessageManager.ensureAnswerVariants(host, message);
+    const variants: Array<AgentAnswer> = AgentMessageManager.ensureAnswers(host, message);
     if (variants.length === 0) {
       return;
     }
 
-    const activeVariant: ChatAnswerVariant = variants[message.activeAnswerVersionIndex];
-    AgentVariantHelper.syncMessageToVariant(message, activeVariant);
+    const activeVersion: AgentAnswer = variants[message.activeAnswerIndex];
+    AgentAnswerHelper.syncMessageToAnswer(message, activeVersion);
   }
 
-  private static applyActiveVariantToMessage(host: AgentMessageManagerHost, message: ChatMessage): void {
+  private static applyActiveAnswerToMessage(host: AgentMessageManagerHost, message: ChatMessage): void {
     if (message.role !== MessageRole.Assistant) {
       return;
     }
 
-    const variants: Array<ChatAnswerVariant> = AgentMessageManager.ensureAnswerVariants(host, message);
+    const variants: Array<AgentAnswer> = AgentMessageManager.ensureAnswers(host, message);
     if (variants.length === 0) {
       return;
     }
 
-    const activeVariant: ChatAnswerVariant = variants[message.activeAnswerVersionIndex];
-    AgentVariantHelper.applyVariantToMessage(message, activeVariant);
+    const activeVersion: AgentAnswer = variants[message.activeAnswerIndex];
+    AgentAnswerHelper.applyAnswerToMessage(message, activeVersion);
   }
 
-  private static replaceAnswerVariants(host: AgentMessageManagerHost, messageId: string, variants: Array<ChatAnswerVariant>): void {
-    host.answerVariantsByMessageId.set(messageId, variants);
+  private static replaceAnswers(host: AgentMessageManagerHost, messageId: string, variants: Array<AgentAnswer>): void {
+    host.answersByMessageId.set(messageId, variants);
   }
 
   private static syncMessageUiState(message: ChatMessage): void {
@@ -716,39 +716,39 @@ export class AgentMessageManager {
     target.taskId = source.taskId;
     target.createdAt = source.createdAt;
     target.feedback = source.feedback;
-    target.answerVersionCount = source.answerVersionCount;
-    target.activeAnswerVersionIndex = source.activeAnswerVersionIndex;
+    target.answerCount = source.answerCount;
+    target.activeAnswerIndex = source.activeAnswerIndex;
     target.showActions = source.showActions;
   }
 
-  private static getActiveAnswerVariant(host: AgentMessageManagerHost, message: ChatMessage): ChatAnswerVariant | null {
-    const variants: Array<ChatAnswerVariant> = AgentMessageManager.ensureAnswerVariants(host, message);
+  private static getActiveAnswer(host: AgentMessageManagerHost, message: ChatMessage): AgentAnswer | null {
+    const variants: Array<AgentAnswer> = AgentMessageManager.ensureAnswers(host, message);
     if (variants.length === 0) {
       return null;
     }
-    return variants[message.activeAnswerVersionIndex];
+    return variants[message.activeAnswerIndex];
   }
 
-  private static cloneAnswerVariants(host: AgentMessageManagerHost, messageId: string): Array<ChatAnswerVariant> {
-    const variants: Array<ChatAnswerVariant> | undefined = host.answerVariantsByMessageId.get(messageId);
+  private static cloneAnswers(host: AgentMessageManagerHost, messageId: string): Array<AgentAnswer> {
+    const variants: Array<AgentAnswer> | undefined = host.answersByMessageId.get(messageId);
     if (variants === undefined) {
       return [];
     }
-    const nextVariants: Array<ChatAnswerVariant> = [];
+    const nextVersions: Array<AgentAnswer> = [];
     for (let index: number = 0; index < variants.length; index++) {
-      nextVariants.push(variants[index].copy());
+      nextVersions.push(variants[index].copy());
     }
-    return nextVariants;
+    return nextVersions;
   }
 
-  private static buildPendingQueryAgainVariant(host: AgentMessageManagerHost, localMessageId: string): ChatAnswerVariant {
-    return AgentVariantHelper.buildPendingQueryAgainVariant(localMessageId, (prefix: string): string => {
+  private static buildPendingAnswerForRetry(host: AgentMessageManagerHost, localMessageId: string): AgentAnswer {
+    return AgentAnswerHelper.buildPendingAnswerForRetry(localMessageId, (prefix: string): string => {
       return host.createMessageId(prefix);
     });
   }
 
   private static applyMessageToList(host: AgentMessageManagerHost, messageIndex: number, nextMessage: ChatMessage): void {
-    AgentMessageManager.syncMessageToActiveVariant(host, nextMessage);
+    AgentMessageManager.syncMessageToActiveAnswer(host, nextMessage);
     AgentMessageManager.syncMessageUiState(nextMessage);
     AgentMessageManager.patchMessage(host.messages[messageIndex], nextMessage);
     host.messages = host.messages.slice();
@@ -771,15 +771,15 @@ export class AgentMessageManager {
     return -1;
   }
 
-  private static buildVariantsFromHistoryMessage(host: AgentMessageManagerHost, historyMessage: HiAgentHistoryMessage): Array<ChatAnswerVariant> {
-    const variants: Array<ChatAnswerVariant> = [];
+  private static buildAnswersFromHistoryMessage(host: AgentMessageManagerHost, historyMessage: HiAgentHistoryMessage): Array<AgentAnswer> {
+    const variants: Array<AgentAnswer> = [];
     for (let index: number = 0; index < historyMessage.otherAnswers.length; index++) {
-      variants.push(AgentMessageManager.buildVariantFromAnswerInfo(host, historyMessage.otherAnswers[index]));
+      variants.push(AgentMessageManager.buildAnswerFromAnswerInfo(host, historyMessage.otherAnswers[index]));
     }
-    variants.sort((left: ChatAnswerVariant, right: ChatAnswerVariant) => left.createdAt - right.createdAt);
+    variants.sort((left: AgentAnswer, right: AgentAnswer) => left.createdAt - right.createdAt);
 
     if (historyMessage.answerInfo.messageId.trim().length > 0 || historyMessage.answerInfo.answer.trim().length > 0) {
-      variants.push(AgentMessageManager.buildVariantFromAnswerInfo(host, historyMessage.answerInfo));
+      variants.push(AgentMessageManager.buildAnswerFromAnswerInfo(host, historyMessage.answerInfo));
     } else if (historyMessage.answer.trim().length > 0) {
       const fallbackAnswerInfo: HiAgentMessageAnswerInfo = new HiAgentMessageAnswerInfo(
         historyMessage.answer,
@@ -787,7 +787,7 @@ export class AgentMessageManager {
         historyMessage.createdTime,
         historyMessage.taskId
       );
-      variants.push(AgentMessageManager.buildVariantFromAnswerInfo(host, fallbackAnswerInfo));
+      variants.push(AgentMessageManager.buildAnswerFromAnswerInfo(host, fallbackAnswerInfo));
     }
     return variants;
   }
@@ -1080,8 +1080,8 @@ export class AgentMessageManager {
     return AgentTextUtils.mergeStreamAnswer(currentContent, incomingContent, replaceAll);
   }
 
-  private static buildVariantFromAnswerInfo(host: AgentMessageManagerHost, answerInfo: HiAgentMessageAnswerInfo): ChatAnswerVariant {
-    return AgentVariantHelper.buildVariantFromAnswerInfo(answerInfo, (prefix: string): string => {
+  private static buildAnswerFromAnswerInfo(host: AgentMessageManagerHost, answerInfo: HiAgentMessageAnswerInfo): AgentAnswer {
+    return AgentAnswerHelper.buildAnswerFromAnswerInfo(answerInfo, (prefix: string): string => {
       return host.createMessageId(prefix);
     });
   }
