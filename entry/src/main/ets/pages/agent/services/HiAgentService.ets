@@ -161,6 +161,8 @@ export class HiAgentService {
         HiAgentService.readString(item, 'ConversationID'),
         HiAgentService.readString(item, 'QueryID'),
         HiAgentService.readString(item, 'Query'),
+        HiAgentService.buildUserMessageContent(item),
+        HiAgentService.buildUserMessageParts(item),
         answerInfo.answer,
         answerInfo.messageId,
         answerInfo.taskId,
@@ -566,6 +568,42 @@ export class HiAgentService {
       HiAgentService.readNumber(source, 'Latency'),
       HiAgentService.readString(source, 'TracingJsonStr')
     );
+  }
+
+  private static buildUserMessageContent(source: ESObject): string {
+    return HiAgentService.buildUserMessageParts(source).join('\n\n');
+  }
+
+  private static buildUserMessageParts(source: ESObject): Array<string> {
+    const userMessageObject: ESObject = HiAgentService.readObject(source, 'UserMessage');
+    const userMessageItems: Array<ESObject> = HiAgentService.readObjectArray(userMessageObject, 'Messages');
+    if (userMessageItems.length === 0) {
+      return [];
+    }
+
+    const contentParts: Array<string> = [];
+    for (let index: number = 0; index < userMessageItems.length; index++) {
+      const item: ESObject = userMessageItems[index];
+      const type: string = HiAgentService.readString(item, 'type').trim().toLowerCase();
+      if (type === 'text') {
+        const text: string = HiAgentService.readString(item, 'text').trim();
+        if (text.length > 0) {
+          contentParts.push(text);
+        }
+        continue;
+      }
+      if (type === 'image') {
+        const imageObject: ESObject = HiAgentService.readObject(item, 'image');
+        const imageUrl: string = HiAgentService.readString(imageObject, 'url').trim();
+        if (imageUrl.length === 0) {
+          continue;
+        }
+        const imageName: string = HiAgentService.readString(imageObject, 'name').trim();
+        const altText: string = imageName.length > 0 ? imageName : 'image';
+        contentParts.push(`![${altText}](${imageUrl})`);
+      }
+    }
+    return contentParts;
   }
 
   private static readResponseMetadataErrorMessage(source: ESObject): string {

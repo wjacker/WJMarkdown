@@ -21,13 +21,12 @@ struct ChatBubbleContentArea {
           .width('100%')
           .padding({ left: 6, right: 6 })
         } else {
-          Text(this.message.visibleContent)
-            .fontSize(15)
-            .lineHeight(24)
-            .fontColor('#FFFFFF')
-            .fontWeight(FontWeight.Medium)
-            .wordBreak(WordBreak.BREAK_WORD)
-            .textAlign(TextAlign.Start)
+          MarkdownMessage({
+            content: this.message.visibleContent,
+            isStreaming: false,
+            isAssistant: false,
+            streamingLabel: ''
+          })
         }
       }
     }, (token: string) => token)

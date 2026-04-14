@@ -1,15 +1,19 @@
 import { ChatBubble } from './components/ChatBubble';
 import { AgentHeaderView } from './components/AgentHeaderView';
 import { AgentChantInputView } from './components/AgentChantInputView';
-import { AgentChantInputViewActionDispatcher, AgentChantInputViewActionType } from './components/AgentChantInputViewActionDispatcher';
 import { ChatBubbleActionDispatcher, ChatBubbleActionType } from './components/ChatBubbleActionDispatcher';
 import { ConversationHistory, ConversationHistoryHelper } from './components/ConversationHistory';
 import { ConversationDrawerActionDispatcher, ConversationDrawerActionType } from './components/ConversationDrawerActionDispatcher';
 import pasteboard from '@ohos.pasteboard';
 import promptAction from '@ohos.promptAction';
 import preferences from '@ohos.data.preferences';
+import dataSharePredicates from '@ohos.data.dataSharePredicates';
+import fs from '@ohos.file.fs';
+import fileUri from '@ohos.file.fileuri';
 import textToSpeech from '@hms.ai.textToSpeech';
 import { KeyboardAvoidMode } from '@ohos.arkui.UIContext';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
+import { AgentImageAttachment } from './models/AgentAttachmentModels';
 import { AgentAnswer, ChatMessage, MessageFeedback } from './models/ChatModels';
 import { AgentConversationHelper, AgentConversationItem } from './models/ConversationModels';
 import { HiAgentAppConfigPreview, HiAgentConfig, HiAgentConversation } from './models/HiAgentModels';
@@ -47,6 +51,7 @@ struct AgentDemoPage {
   @State private isRenameDialogVisible: boolean = false;
   @State private isComposerExpanded: boolean = false;
   @State private isComposerFocused: boolean = false;
+  @State attachments: Array<AgentImageAttachment> = [];
 
   messageScroller: Scroller = new Scroller();
   private configStore: preferences.Preferences | null = null;
@@ -71,9 +76,6 @@ struct AgentDemoPage {
       payload: string) => {
       this.handleConversationDrawerAction(action, conversationId, payload);
     });
-    AgentChantInputViewActionDispatcher.register((action: AgentChantInputViewActionType) => {
-      this.handleAgentChantInputViewAction(action);
-    });
     this.resetConversation();
     this.restoreSavedConfig();
   }
@@ -82,7 +84,6 @@ struct AgentDemoPage {
     this.applyKeyboardAvoidMode(KeyboardAvoidMode.OFFSET);
     ChatBubbleActionDispatcher.clear();
     ConversationDrawerActionDispatcher.clear();
-    AgentChantInputViewActionDispatcher.clear();
     this.flushConfigIfNeeded();
     AgentMessageManager.stopRevealTimer(this);
     AgentMessageManager.closeActiveSession(this);
@@ -140,7 +141,20 @@ struct AgentDemoPage {
             draft: $draft,
             isComposerExpanded: $isComposerExpanded,
             isComposerFocused: $isComposerFocused,
-            isSending: this.isSending
+            isSending: this.isSending,
+            attachments: this.attachments,
+            onVoice: () => {
+              this.handleVoiceInput();
+            },
+            onUploadImage: () => {
+              void this.handleImageUpload();
+            },
+            onRemoveAttachment: (attachmentId: string): void => {
+              this.removeAttachment(attachmentId);
+            },
+            onSubmitOrStop: () => {
+              this.handleSubmitOrStop();
+            }
           })
         }
         .height('100%')
@@ -338,7 +352,7 @@ struct AgentDemoPage {
   }
 
   private hasDraftContent(): boolean {
-    return this.draft.trim().length > 0;
+    return this.draft.trim().length > 0 || this.attachments.length > 0;
   }
 
   private applyKeyboardAvoidMode(mode: KeyboardAvoidMode): void {
@@ -348,11 +362,11 @@ struct AgentDemoPage {
     }
   }
 
-  private handleAgentChantInputViewAction(action: AgentChantInputViewActionType): void {
-    if (action === AgentChantInputViewActionType.Voice) {
-      this.showToast('暂不支持语音输入');
-      return;
-    }
+  private handleVoiceInput(): void {
+    this.showToast('暂不支持语音输入');
+  }
+
+  private handleSubmitOrStop(): void {
     if (this.isSending) {
       void AgentMessageManager.stopActiveResponse(this);
       return;
@@ -361,6 +375,39 @@ struct AgentDemoPage {
       return;
     }
     void AgentMessageManager.sendPrompt(this);
+  }
+
+  private async handleImageUpload(): Promise<void> {
+    try {
+      const picker: photoAccessHelper.PhotoViewPicker = new photoAccessHelper.PhotoViewPicker();
+      const result: photoAccessHelper.PhotoSelectResult = await picker.select({
+        MIMEType: photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE,
+        maxSelectNumber: 1
+      });
+      if (result.photoUris.length === 0) {
+        return;
+      }
+      const attachment: AgentImageAttachment | null = await this.buildImageAttachment(result.photoUris[0]);
+      if (attachment === null) {
+        this.showToast('图片读取失败，请重试');
+        return;
+      }
+      this.attachments = [attachment];
+      this.isComposerExpanded = true;
+      this.isComposerFocused = false;
+      this.statusText = '图片已添加，当前仅做本地渲染。';
+      this.showToast('图片已添加');
+    } catch (error) {
+      this.statusText = `图片选择失败：${this.stringifyError(error as Object)}`;
+      this.showToast(`图片选择失败：${this.stringifyError(error as Object)}`);
+    }
+  }
+
+  private removeAttachment(attachmentId: string): void {
+    this.attachments = this.attachments.filter((attachment: AgentImageAttachment) => attachment.id !== attachmentId);
+    if (this.draft.trim().length === 0 && this.attachments.length === 0 && !this.isSending && !this.isComposerFocused) {
+      this.isComposerExpanded = false;
+    }
   }
 
   private handleChatBubbleAction(messageId: string, action: ChatBubbleActionType): void {
@@ -453,6 +500,7 @@ struct AgentDemoPage {
     AgentMessageManager.closeActiveSession(this);
     AgentSpeechManager.stopSpeakingMessage(this, false);
     this.answersByMessageId.clear();
+    this.attachments = [];
     this.conversationId = '';
     this.serviceConversationId = '';
     this.isSending = false;
@@ -517,6 +565,94 @@ struct AgentDemoPage {
       }
     } catch (_error) {
       this.statusText = '配置读取失败，请重新填写接口参数。';
+    }
+  }
+
+  private async buildImageAttachment(sourceUri: string): Promise<AgentImageAttachment | null> {
+    const context: Context = getContext(this);
+    const photoHelper: photoAccessHelper.PhotoAccessHelper = photoAccessHelper.getPhotoAccessHelper(context);
+    const predicates: dataSharePredicates.DataSharePredicates = new dataSharePredicates.DataSharePredicates();
+    predicates.equalTo(String(photoAccessHelper.PhotoKeys.URI), sourceUri);
+    const fetchResult: photoAccessHelper.FetchResult<photoAccessHelper.PhotoAsset> = await photoHelper.getAssets({
+      fetchColumns: [String(photoAccessHelper.PhotoKeys.URI), String(photoAccessHelper.PhotoKeys.DISPLAY_NAME)],
+      predicates: predicates
+    });
+    try {
+      const assets: Array<photoAccessHelper.PhotoAsset> = await fetchResult.getAllObjects();
+      if (assets.length === 0) {
+        return null;
+      }
+      const asset: photoAccessHelper.PhotoAsset = assets[0];
+      const imageData: ArrayBuffer = await this.readImageData(context, asset);
+      const fileName: string = this.resolveAttachmentFileName(sourceUri, asset);
+      const attachmentPath: string = this.writeAttachmentToSandbox(context, fileName, imageData);
+      const attachmentUri: string = fileUri.getUriFromPath(attachmentPath);
+      return new AgentImageAttachment(
+        this.createMessageId('attachment'),
+        fileName,
+        attachmentUri,
+        attachmentPath,
+        sourceUri
+      );
+    } finally {
+      fetchResult.close();
+    }
+  }
+
+  private readImageData(context: Context, asset: photoAccessHelper.PhotoAsset): Promise<ArrayBuffer> {
+    return new Promise((resolve: (value: ArrayBuffer) => void, reject: (reason?: Object) => void) => {
+      let settled: boolean = false;
+      void photoAccessHelper.MediaAssetManager.requestImageData(context, asset, {
+        deliveryMode: photoAccessHelper.DeliveryMode.HIGH_QUALITY_MODE
+      }, {
+        onDataPrepared: (data: ArrayBuffer): void => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          resolve(data);
+        }
+      }).catch((error: Object) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        reject(error);
+      });
+    });
+  }
+
+  private writeAttachmentToSandbox(context: Context, fileName: string, imageData: ArrayBuffer): string {
+    const attachmentDir: string = `${context.tempDir}/chat-attachments`;
+    let attachmentDirExists: boolean = false;
+    try {
+      attachmentDirExists = fs.accessSync(attachmentDir);
+    } catch (_error) {
+      attachmentDirExists = false;
+    }
+    if (!attachmentDirExists) {
+      fs.mkdirSync(attachmentDir, true);
+    }
+    const attachmentPath: string = `${attachmentDir}/${Date.now()}-${fileName}`;
+    const file: fs.File = fs.openSync(attachmentPath,
+      fs.OpenMode.CREATE | fs.OpenMode.TRUNC | fs.OpenMode.WRITE_ONLY);
+    try {
+      fs.writeSync(file.fd, imageData);
+    } finally {
+      fs.closeSync(file);
+    }
+    return attachmentPath;
+  }
+
+  private resolveAttachmentFileName(sourceUri: string, asset: photoAccessHelper.PhotoAsset): string {
+    const displayName: string = `${asset.get(photoAccessHelper.PhotoKeys.DISPLAY_NAME) ?? ''}`.trim();
+    if (displayName.length > 0) {
+      return displayName;
+    }
+    try {
+      return new fileUri.FileUri(sourceUri).name;
+    } catch (_error) {
+      return `image-${Date.now()}.jpg`;
     }
   }
 

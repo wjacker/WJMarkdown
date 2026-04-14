@@ -240,6 +240,8 @@ export class HiAgentHistoryMessage {
   conversationId: string;
   queryId: string;
   query: string;
+  userMessageContent: string;
+  userMessageParts: Array<string>;
   answer: string;
   messageId: string;
   taskId: string;
@@ -251,6 +253,8 @@ export class HiAgentHistoryMessage {
     conversationId: string = '',
     queryId: string = '',
     query: string = '',
+    userMessageContent: string = '',
+    userMessageParts: Array<string> = [],
     answer: string = '',
     messageId: string = '',
     taskId: string = '',
@@ -261,6 +265,8 @@ export class HiAgentHistoryMessage {
     this.conversationId = conversationId;
     this.queryId = queryId;
     this.query = query;
+    this.userMessageContent = userMessageContent;
+    this.userMessageParts = userMessageParts;
     this.answer = answer;
     this.messageId = messageId;
     this.taskId = taskId;

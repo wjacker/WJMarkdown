@@ -417,12 +417,14 @@ export struct MarkdownMessage {
           .fontColor(this.getSecondaryTextColor())
       }
 
-      Text(block.imageUrl)
-        .width('100%')
-        .fontSize(11)
-        .lineHeight(16)
-        .fontColor(this.getSecondaryTextColor())
-        .wordBreak(WordBreak.BREAK_ALL)
+      if (this.shouldShowImageUrl(block.imageUrl)) {
+        Text(block.imageUrl)
+          .width('100%')
+          .fontSize(11)
+          .lineHeight(16)
+          .fontColor(this.getSecondaryTextColor())
+          .wordBreak(WordBreak.BREAK_ALL)
+      }
     }
     .width('100%')
     .padding(12)
@@ -465,6 +467,14 @@ export struct MarkdownMessage {
       return 18;
     }
     return 16;
+  }
+
+  private shouldShowImageUrl(imageUrl: string): boolean {
+    const normalizedUrl: string = imageUrl.trim().toLowerCase();
+    return normalizedUrl.length > 0 &&
+      !normalizedUrl.startsWith('file://') &&
+      !normalizedUrl.startsWith('datashare://') &&
+      !normalizedUrl.startsWith('content://');
   }
 
   private getTableCellAlign(block: MarkdownBlock, columnIndex: number): TextAlign {

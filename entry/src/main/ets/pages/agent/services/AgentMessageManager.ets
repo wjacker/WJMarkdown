@@ -1,4 +1,5 @@
 import { AgentAnswer, ChatMessage, ChatMessagePhase, MessageFeedback, MessageRole } from '../models/ChatModels';
+import { AgentImageAttachment } from '../models/AgentAttachmentModels';
 import { HiAgentConfig, HiAgentEventHelper, HiAgentHistoryMessage, HiAgentMessageAnswerInfo, HiAgentStreamEvent } from '../models/HiAgentModels';
 import { HiAgentService, HiAgentStreamSession } from './HiAgentService';
 import { AgentTextUtils } from '../utils/AgentTextUtils';
@@ -7,6 +8,7 @@ import { AgentAnswerHelper } from '../utils/AgentAnswerHelper';
 export interface AgentMessageManagerHost {
   messages: Array<ChatMessage>;
   draft: string;
+  attachments: Array<AgentImageAttachment>;
   conversationId: string;
   statusText: string;
   isSending: boolean;
@@ -67,7 +69,7 @@ export class AgentMessageManager {
 
   static async sendPrompt(host: AgentMessageManagerHost): Promise<void> {
     const prompt: string = host.draft.trim();
-    if (prompt.length === 0) {
+    if (prompt.length === 0 && host.attachments.length === 0) {
       host.statusText = '先输入一个问题再发送。';
       return;
     }
@@ -82,10 +84,16 @@ export class AgentMessageManager {
     const shouldUpdateEmptyConversationTitle: boolean = AgentMessageManager.isCurrentConversationEmpty(host);
 
     const nextMessages: Array<ChatMessage> = host.messages.slice();
-    const userMessage: ChatMessage = ChatMessage.user(host.createMessageId('user'), prompt);
-    userMessage.conversationId = host.conversationId;
-    AgentMessageManager.syncMessageUiState(userMessage);
-    nextMessages.push(userMessage);
+    const userMessageParts: Array<string> = AgentMessageManager.composeUserVisibleParts(prompt, host.attachments);
+    for (let index: number = 0; index < userMessageParts.length; index++) {
+      const userMessage: ChatMessage = ChatMessage.user(
+        host.createMessageId(`user-${index}`),
+        userMessageParts[index]
+      );
+      userMessage.conversationId = host.conversationId;
+      AgentMessageManager.syncMessageUiState(userMessage);
+      nextMessages.push(userMessage);
+    }
 
     const assistantMessageId: string = host.createMessageId('assistant');
     const assistantMessage: ChatMessage = ChatMessage.assistant(assistantMessageId, '', '', true);
@@ -104,6 +112,7 @@ export class AgentMessageManager {
     host.activeAssistantMessageId = assistantMessageId;
     host.isSending = true;
     host.draft = '';
+    host.attachments = [];
     host.statusText = host.conversationId.length > 0
       ? `会话 ${host.shortenId(host.conversationId)} 已连接，正在发送...`
       : '正在创建会话...';
@@ -250,6 +259,18 @@ export class AgentMessageManager {
     }, host.revealIntervalMs) as number;
   }
 
+  private static composeUserVisibleParts(prompt: string, attachments: Array<AgentImageAttachment>): Array<string> {
+    const parts: Array<string> = [];
+    for (let index: number = 0; index < attachments.length; index++) {
+      const attachment: AgentImageAttachment = attachments[index];
+      parts.push(`![${attachment.name}](${attachment.fileUri})`);
+    }
+    if (prompt.length > 0) {
+      parts.push(prompt);
+    }
+    return parts;
+  }
+
   static stopRevealTimer(host: AgentMessageManagerHost): void {
     if (host.revealTimer >= 0) {
       clearInterval(host.revealTimer);
@@ -291,8 +312,12 @@ export class AgentMessageManager {
     const nextMessages: Array<ChatMessage> = [];
     for (let index: number = 0; index < historyMessages.length; index++) {
       const historyMessage: HiAgentHistoryMessage = historyMessages[index];
-      if (historyMessage.query.trim().length > 0) {
-        const userMessage: ChatMessage = ChatMessage.user(host.createMessageId(`history-user-${index}`), historyMessage.query);
+      const userMessageParts: Array<string> = AgentMessageManager.resolveHistoryUserMessageParts(historyMessage);
+      for (let userIndex: number = 0; userIndex < userMessageParts.length; userIndex++) {
+        const userMessage: ChatMessage = ChatMessage.user(
+          host.createMessageId(`history-user-${index}-${userIndex}`),
+          userMessageParts[userIndex]
+        );
         userMessage.conversationId = host.conversationId;
         userMessage.createdAt = historyMessage.createdTime * 1000;
         AgentMessageManager.syncMessageUiState(userMessage);
@@ -412,8 +437,13 @@ export class AgentMessageManager {
       return;
     }
 
-    const pairedUserMessageIndex: number = AgentMessageManager.findPairedUserMessageIndex(host, messageIndex);
-    const pairedUserMessage: ChatMessage | null = pairedUserMessageIndex >= 0 ? host.messages[pairedUserMessageIndex].copy() : null;
+    const pairedUserMessageStartIndex: number = AgentMessageManager.findPairedUserMessageStartIndex(host, messageIndex);
+    const pairedUserMessages: Array<ChatMessage> = [];
+    if (pairedUserMessageStartIndex >= 0) {
+      for (let index: number = pairedUserMessageStartIndex; index < messageIndex; index++) {
+        pairedUserMessages.push(host.messages[index].copy());
+      }
+    }
     const sourceMessage: ChatMessage = host.messages[messageIndex].copy();
     const existingVersions: Array<AgentAnswer> = AgentMessageManager.ensureAnswers(host, sourceMessage);
     if (existingVersions.length > 0) {
@@ -460,11 +490,12 @@ export class AgentMessageManager {
 
     const nextMessages: Array<ChatMessage> = host.messages.slice();
     nextMessages.splice(messageIndex, 1);
-    if (pairedUserMessageIndex >= 0) {
-      nextMessages.splice(pairedUserMessageIndex, 1);
+    if (pairedUserMessageStartIndex >= 0) {
+      nextMessages.splice(pairedUserMessageStartIndex, messageIndex - pairedUserMessageStartIndex);
     }
-    if (pairedUserMessage !== null) {
-      pairedUserMessage.id = host.createMessageId('user');
+    for (let index: number = 0; index < pairedUserMessages.length; index++) {
+      const pairedUserMessage: ChatMessage = pairedUserMessages[index];
+      pairedUserMessage.id = host.createMessageId(`user-${index}`);
       AgentMessageManager.syncMessageUiState(pairedUserMessage);
       nextMessages.push(pairedUserMessage);
     }
@@ -523,13 +554,13 @@ export class AgentMessageManager {
       if (nextVersions.length === 0) {
         host.answersByMessageId.delete(messageId);
         const nextMessages: Array<ChatMessage> = host.messages.slice();
-        const pairedUserMessageIndex: number = AgentMessageManager.findPairedUserMessageIndex(host, messageIndex);
+        const pairedUserMessageStartIndex: number = AgentMessageManager.findPairedUserMessageStartIndex(host, messageIndex);
         nextMessages.splice(messageIndex, 1);
-        if (pairedUserMessageIndex >= 0) {
-          nextMessages.splice(pairedUserMessageIndex, 1);
+        if (pairedUserMessageStartIndex >= 0) {
+          nextMessages.splice(pairedUserMessageStartIndex, messageIndex - pairedUserMessageStartIndex);
         }
         host.messages = nextMessages;
-        host.statusText = pairedUserMessageIndex >= 0 ? '已删除当前问答。' : '已删除当前回复。';
+        host.statusText = pairedUserMessageStartIndex >= 0 ? '已删除当前问答。' : '已删除当前回复。';
       } else {
         const fallbackIndex: number = Math.min(hydratedMessage.activeAnswerIndex, nextVersions.length - 1);
         AgentMessageManager.replaceAnswers(host, messageId, nextVersions);
@@ -754,21 +785,36 @@ export class AgentMessageManager {
     host.messages = host.messages.slice();
   }
 
-  private static findPairedUserMessageIndex(host: AgentMessageManagerHost, assistantMessageIndex: number): number {
+  private static findPairedUserMessageStartIndex(host: AgentMessageManagerHost, assistantMessageIndex: number): number {
     if (assistantMessageIndex <= 0 || assistantMessageIndex >= host.messages.length) {
       return -1;
     }
 
+    let pairedUserMessageStartIndex: number = -1;
     for (let index: number = assistantMessageIndex - 1; index >= 0; index--) {
       const candidate: ChatMessage = host.messages[index];
       if (candidate.role === MessageRole.User) {
-        return index;
+        pairedUserMessageStartIndex = index;
+        continue;
       }
       if (candidate.role === MessageRole.Assistant) {
-        return -1;
+        break;
       }
     }
-    return -1;
+    return pairedUserMessageStartIndex;
+  }
+
+  private static resolveHistoryUserMessageParts(historyMessage: HiAgentHistoryMessage): Array<string> {
+    if (historyMessage.userMessageParts.length > 0) {
+      return historyMessage.userMessageParts;
+    }
+    if (historyMessage.userMessageContent.trim().length > 0) {
+      return [historyMessage.userMessageContent];
+    }
+    if (historyMessage.query.trim().length > 0) {
+      return [historyMessage.query];
+    }
+    return [];
   }
 
   private static buildAnswersFromHistoryMessage(host: AgentMessageManagerHost, historyMessage: HiAgentHistoryMessage): Array<AgentAnswer> {
