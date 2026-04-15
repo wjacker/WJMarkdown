@@ -67,6 +67,8 @@ export struct AgentChantInputView {
                 }
               })
 
+              Blank()
+
               Button() {
                 Image($r('app.media.icon_ai_upload'))
                   .width(22)
@@ -83,8 +85,6 @@ export struct AgentChantInputView {
                 }
               })
 
-              Blank()
-
               Button() {
                 Image(this.isSending ? $r('app.media.icon_ai_stop') : $r('app.media.icon_send'))
                   .width(22)
@@ -94,6 +94,7 @@ export struct AgentChantInputView {
               }
               .width(28)
               .height(28)
+              .margin({ left: 10 })
               .backgroundColor(Color.Transparent)
               .borderRadius(14)
               .enabled(this.isSending || this.hasSendableContent())
@@ -126,6 +127,12 @@ export struct AgentChantInputView {
                 }
               })
 
+              Text('发消息...')
+                .layoutWeight(1)
+                .fontSize(16)
+                .fontColor('#C0C8D4')
+                .textAlign(TextAlign.Start)
+
               Button() {
                 Image($r('app.media.icon_ai_upload'))
                   .width(22)
@@ -142,12 +149,6 @@ export struct AgentChantInputView {
                 }
               })
 
-              Text('发消息...')
-                .layoutWeight(1)
-                .fontSize(16)
-                .fontColor('#C0C8D4')
-                .textAlign(TextAlign.Start)
-
               Button() {
                 Image(this.isSending ? $r('app.media.icon_ai_stop') : $r('app.media.icon_send'))
                   .width(22)
@@ -157,6 +158,7 @@ export struct AgentChantInputView {
               }
               .width(28)
               .height(28)
+              .margin({ left: 10 })
               .backgroundColor(Color.Transparent)
               .borderRadius(14)
               .enabled(this.isSending || this.hasSendableContent())
